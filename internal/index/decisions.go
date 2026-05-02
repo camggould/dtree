@@ -6,6 +6,12 @@
 // run in a single transaction so the index stays consistent.
 //
 // GetDecisionRev returns the current rev token without loading the full row.
+//
+// UpdateDecisionWithExpectedRev and DeleteDecisionWithExpectedRev add
+// If-Match-style optimistic concurrency: the caller supplies the rev it last
+// saw, and the function returns *concurrency.Conflict (wrapping
+// concurrency.ErrConflict) if the stored rev has since changed. Pass "" to
+// skip the check (legacy / unconditional behavior).
 package index
 
 import (
@@ -14,6 +20,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/cgould/dtree/internal/concurrency"
 	"github.com/cgould/dtree/internal/core"
 	"github.com/cgould/dtree/internal/ulid"
 )
@@ -130,13 +137,38 @@ func InsertDecision(db *DB, d *core.Decision, contentSha string) error {
 }
 
 // UpdateDecision replaces all mutable columns for d and refreshes junction
-// tables in a single transaction. newRev is stored in rev.
+// tables in a single transaction. newRev is stored in rev. It does not check
+// the current rev (legacy / unconditional behavior); use
+// UpdateDecisionWithExpectedRev for optimistic concurrency.
 func UpdateDecision(db *DB, d *core.Decision, contentSha, newRev string) error {
+	return UpdateDecisionWithExpectedRev(db, d, contentSha, "", newRev)
+}
+
+// UpdateDecisionWithExpectedRev is like UpdateDecision but first asserts that
+// the stored rev equals expectedRev. When expectedRev is "" the check is
+// skipped (equivalent to UpdateDecision). On mismatch it returns a
+// *concurrency.Conflict without modifying the row.
+func UpdateDecisionWithExpectedRev(db *DB, d *core.Decision, contentSha, expectedRev, newRev string) error {
 	tx, err := db.conn.Begin()
 	if err != nil {
 		return fmt.Errorf("index: update decision begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+
+	if expectedRev != "" {
+		var currentRev string
+		err := tx.QueryRow(`SELECT rev FROM decisions WHERE id = ?`, d.ID).Scan(&currentRev)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("index: update decision read rev %s: %w", d.ID, err)
+		}
+		if currentRev != expectedRev {
+			return &concurrency.Conflict{
+				DecisionID:  d.ID,
+				ExpectedRev: expectedRev,
+				ActualRev:   currentRev,
+			}
+		}
+	}
 
 	_, err = tx.Exec(`
 		UPDATE decisions SET
@@ -185,11 +217,44 @@ func UpdateDecision(db *DB, d *core.Decision, contentSha, newRev string) error {
 }
 
 // DeleteDecision sets deleted=1 for id (soft delete). The row stays
-// queryable so replay and audit can still see it.
+// queryable so replay and audit can still see it. It does not check the
+// current rev; use DeleteDecisionWithExpectedRev for optimistic concurrency.
 func DeleteDecision(db *DB, id string) error {
-	_, err := db.conn.Exec(`UPDATE decisions SET deleted=1 WHERE id=?`, id)
+	return DeleteDecisionWithExpectedRev(db, id, "")
+}
+
+// DeleteDecisionWithExpectedRev is like DeleteDecision but first asserts that
+// the stored rev equals expectedRev inside the same transaction. When
+// expectedRev is "" the check is skipped. On mismatch it returns a
+// *concurrency.Conflict without modifying the row.
+func DeleteDecisionWithExpectedRev(db *DB, id, expectedRev string) error {
+	tx, err := db.conn.Begin()
 	if err != nil {
+		return fmt.Errorf("index: delete decision begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if expectedRev != "" {
+		var currentRev string
+		err := tx.QueryRow(`SELECT rev FROM decisions WHERE id = ?`, id).Scan(&currentRev)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("index: delete decision read rev %s: %w", id, err)
+		}
+		if currentRev != expectedRev {
+			return &concurrency.Conflict{
+				DecisionID:  id,
+				ExpectedRev: expectedRev,
+				ActualRev:   currentRev,
+			}
+		}
+	}
+
+	if _, err := tx.Exec(`UPDATE decisions SET deleted=1 WHERE id=?`, id); err != nil {
 		return fmt.Errorf("index: soft-delete decision %s: %w", id, err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("index: delete decision commit: %w", err)
 	}
 	return nil
 }
