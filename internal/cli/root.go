@@ -2,6 +2,8 @@
 package cli
 
 import (
+	"os"
+
 	"github.com/spf13/cobra"
 )
 
@@ -17,7 +19,16 @@ func NewRootCommand() *cobra.Command {
 		SilenceUsage:  true,
 	}
 
+	// --repo-root defaults to the current working directory. Tests and headless
+	// contexts can override this to point at a synthetic repo tree.
+	cwd, _ := os.Getwd()
+	root.PersistentFlags().String("repo-root", cwd, "Path to the repo root (default: current directory)")
+
+	// --output sets the global output format. Empty string means auto-detect.
+	root.PersistentFlags().String("output", "", "Output format: human, json, yaml (default: auto-detect)")
+
 	root.AddCommand(newVersionCommand())
+	root.AddCommand(newConfigCommand())
 
 	return root
 }
