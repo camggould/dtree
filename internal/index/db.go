@@ -61,6 +61,21 @@ func Open(path string) (*DB, error) {
 		_ = conn.Close()
 		return nil, err
 	}
+
+	// Check schema version after CreateSchema stamps a fresh DB.
+	current, err := db.SchemaVersion()
+	if err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	if current > CurrentSchemaVersion {
+		_ = conn.Close()
+		return nil, fmt.Errorf(
+			"index: binary too old; upgrade dtree (db schema_version=%d, binary supports up to %d)",
+			current, CurrentSchemaVersion,
+		)
+	}
+
 	return db, nil
 }
 
@@ -93,6 +108,22 @@ func (db *DB) SchemaVersion() (int, error) {
 		return 0, fmt.Errorf("index: read schema_version: %w", err)
 	}
 	return v, nil
+}
+
+// NeedsMigration reports whether the on-disk schema version is behind the
+// version this binary supports. Returns (current, target, true) when a
+// migration is needed, or (current, target, false) when already up to date.
+//
+// The caller (typically the dtree migrate command) uses this to decide
+// whether to invoke migrations.Default().Apply(...). The index package itself
+// does not import migrations to avoid a circular dependency.
+func (db *DB) NeedsMigration() (current, target int, needed bool) {
+	v, err := db.SchemaVersion()
+	if err != nil {
+		// Treat errors conservatively — don't claim migration is needed.
+		return 0, CurrentSchemaVersion, false
+	}
+	return v, CurrentSchemaVersion, v < CurrentSchemaVersion
 }
 
 // SetSchemaVersion writes the schema version to _meta. Migration code

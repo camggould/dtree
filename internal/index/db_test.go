@@ -95,7 +95,8 @@ func TestReopenPreservesSchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.SetSchemaVersion(3); err != nil {
+	// Use CurrentSchemaVersion so Open() accepts the version on reopen.
+	if err := db.SetSchemaVersion(CurrentSchemaVersion); err != nil {
 		t.Fatal(err)
 	}
 	_ = db.Close()
@@ -106,7 +107,31 @@ func TestReopenPreservesSchemaVersion(t *testing.T) {
 	}
 	defer db2.Close()
 	got, _ := db2.SchemaVersion()
-	if got != 3 {
-		t.Errorf("got %d, want 3", got)
+	if got != CurrentSchemaVersion {
+		t.Errorf("got %d, want %d", got, CurrentSchemaVersion)
+	}
+}
+
+// TestOpenRejectsTooHighSchemaVersion verifies that Open returns an error
+// when the on-disk schema_version exceeds what this binary supports.
+func TestOpenRejectsTooHighSchemaVersion(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".index.db")
+
+	// Open once to create the schema, then manually bump version beyond
+	// CurrentSchemaVersion to simulate a DB from a future binary.
+	db, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetSchemaVersion(CurrentSchemaVersion + 1); err != nil {
+		t.Fatal(err)
+	}
+	_ = db.Close()
+
+	// Reopen should fail.
+	_, err = Open(path)
+	if err == nil {
+		t.Fatal("Open with future schema_version: expected error, got nil")
 	}
 }
