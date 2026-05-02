@@ -1,0 +1,49 @@
+# Working design doc — kept locally, not committed
+PRD.md
+
+# Built binary
+/dtree
+/dtree-*
+
+# UI build output (regenerated; embedded into binary at build)
+/internal/ui/dist/
+/ui/dist/
+
+# UI dependencies
+/ui/node_modules/
+/ui/.vite/
+
+# Generated TypeScript types (regenerated via `make api`)
+# Note: types.ts IS committed to source — only intermediate caches are ignored
+/ui/.tsc-cache/
+
+# Go build cache
+/vendor/
+
+# Test output
+*.out
+*.test
+coverage.html
+coverage.txt
+
+# SQLite index files (always rebuildable; never source of truth)
+.decisions/.index.db
+.decisions/.index.db-wal
+.decisions/.index.db-shm
+.decisions/.index.lock
+
+# Dotfiles for editors / IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Local environment
+.env
+.env.local
