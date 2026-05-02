@@ -32,6 +32,8 @@ func NewRootCommand() *cobra.Command {
 	root.AddCommand(newInitCommand())
 	root.AddCommand(newWhoamiCommand())
 	root.AddCommand(newAsCommand())
+	root.AddCommand(newActorCommand())
+	root.AddCommand(newAuditCommand())
 
 	return root
 }
