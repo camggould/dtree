@@ -57,6 +57,10 @@ func Open(path string) (*DB, error) {
 		_ = conn.Close()
 		return nil, err
 	}
+	if err := db.CreateSchema(); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
 	return db, nil
 }
 

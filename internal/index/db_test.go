@@ -14,12 +14,13 @@ func TestOpenCreatesDatabase(t *testing.T) {
 	}
 	defer db.Close()
 
+	// Open now calls CreateSchema, which stamps schema_version.
 	v, err := db.SchemaVersion()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v != 0 {
-		t.Errorf("fresh DB schema_version = %d, want 0", v)
+	if v != CurrentSchemaVersion {
+		t.Errorf("fresh DB schema_version = %d, want %d", v, CurrentSchemaVersion)
 	}
 }
 

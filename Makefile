@@ -18,17 +18,22 @@ help:  ## Show this help.
 setup:  ## Install Go dependencies.
 	go mod download
 
+# sqlite_fts5 enables FTS5 full-text search in the bundled SQLite amalgamation.
+# It also requires libm for the BM25 ranking function (-lm is handled by
+# the go-sqlite3 sqlite_fts5 build option).
+GOTAGS ?= sqlite_fts5
+
 .PHONY: build
 build:  ## Build the dtree binary.
-	go build -ldflags="$(LDFLAGS)" -o dtree ./cmd/dtree
+	go build -tags "$(GOTAGS)" -ldflags="$(LDFLAGS)" -o dtree ./cmd/dtree
 
 .PHONY: test
 test:  ## Run all Go tests.
-	go test ./...
+	go test -tags "$(GOTAGS)" ./...
 
 .PHONY: lint
 lint:  ## Run go vet.
-	go vet ./...
+	go vet -tags "$(GOTAGS)" ./...
 
 .PHONY: clean
 clean:  ## Remove build artifacts.
