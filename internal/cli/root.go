@@ -33,6 +33,8 @@ func NewRootCommand() *cobra.Command {
 	root.AddCommand(newConfigCommand())
 	root.AddCommand(newFsckCommand())
 	root.AddCommand(newInitCommand())
+	root.AddCommand(newLsCommand())
+	root.AddCommand(newMigrateCommand())
 	root.AddCommand(newReindexCommand())
 	root.AddCommand(newStatusCommand())
 	root.AddCommand(newSyncCommand())
@@ -41,7 +43,6 @@ func NewRootCommand() *cobra.Command {
 	root.AddCommand(newVersionCommand())
 	root.AddCommand(newWhoamiCommand())
 	root.AddCommand(newNewCommand())
-	root.AddCommand(newMigrateCommand())
 
 	return root
 }
