@@ -72,9 +72,10 @@ type Config struct {
 
 // Server is the dtree MCP server.
 type Server struct {
-	cfg Config
-	mcp *mcpserver.MCPServer
-	log *log.Logger
+	cfg            Config
+	mcp            *mcpserver.MCPServer
+	log            *log.Logger
+	unregisterHook func()
 }
 
 // New constructs and validates a Server. Returns an error when cfg.Actor is
@@ -108,6 +109,7 @@ func New(cfg Config) (*Server, error) {
 
 	s.registerTools()
 	s.registerResources()
+	s.registerAuditHook()
 
 	return s, nil
 }

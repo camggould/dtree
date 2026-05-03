@@ -40,6 +40,7 @@ func NewRootCommand() *cobra.Command {
 	root.AddCommand(newGraphCommand())
 	root.AddCommand(newInitCommand())
 	root.AddCommand(newLsCommand())
+	root.AddCommand(newMCPCommand())
 	root.AddCommand(newMigrateCommand())
 	root.AddCommand(newQueueCommand())
 	root.AddCommand(newReindexCommand())

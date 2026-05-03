@@ -92,6 +92,7 @@ func Append(repoRoot string, ev core.Event) error {
 	if err := fsutil.AppendLine(path, line, 0o644); err != nil {
 		return fmt.Errorf("audit: append to %s: %w", path, err)
 	}
+	notifyHooks(ev)
 	return nil
 }
 
