@@ -25,12 +25,47 @@ import "@xyflow/react/dist/style.css";
 
 // ---- Visuals --------------------------------------------------------------
 
-const STATUS_PALETTE: Record<Status, { ring: string; chipBg: string }> = {
-  proposed: { ring: "#1d4ed8", chipBg: "#1d4ed8" },
-  decided: { ring: "#15803d", chipBg: "#15803d" },
-  out_of_scope: { ring: "#475569", chipBg: "#475569" },
-  superseded: { ring: "#c2410c", chipBg: "#c2410c" },
+import type { Priority } from "@/api/types.gen";
+
+// For PROPOSED decisions the ring colour communicates PRIORITY (so you can
+// scan the graph and see what's critical). For decisions in any other status
+// the ring colour communicates STATUS — those are settled, priority no
+// longer matters as much as "is it done / scoped / superseded".
+const PRIORITY_PALETTE: Record<Priority, { ring: string; label: string }> = {
+  critical:   { ring: "#b91c1c", label: "Critical" }, // red-700
+  high:       { ring: "#ea580c", label: "High" },     // orange-600
+  medium:     { ring: "#1d4ed8", label: "Medium" },   // blue-700
+  low:        { ring: "#64748b", label: "Low" },      // slate-500
+  assumption: { ring: "#8b5cf6", label: "Assumption" }, // violet-500
 };
+const STATUS_PALETTE_NON_PROPOSED: Record<
+  Exclude<Status, "proposed">,
+  { ring: string; label: string; dashed?: boolean }
+> = {
+  decided:      { ring: "#15803d", label: "Decided" },
+  out_of_scope: { ring: "#94a3b8", label: "Out of scope", dashed: true },
+  superseded:   { ring: "#a16207", label: "Superseded", dashed: true },
+};
+
+function nodeStyleFor(d: { status: Status; priority: Priority }): {
+  ring: string;
+  label: string;
+  dashed: boolean;
+} {
+  if (d.status === "proposed") {
+    const p = PRIORITY_PALETTE[d.priority] ?? PRIORITY_PALETTE.medium;
+    return { ring: p.ring, label: p.label.toUpperCase(), dashed: false };
+  }
+  const s =
+    STATUS_PALETTE_NON_PROPOSED[
+      d.status as Exclude<Status, "proposed">
+    ];
+  return {
+    ring: s.ring,
+    label: s.label.toUpperCase(),
+    dashed: s.dashed ?? false,
+  };
+}
 
 const EDGE_COLORS: Record<RelationshipType, string> = {
   blocks: "#dc2626",
@@ -53,26 +88,31 @@ const HANDLE_STYLE: CSSProperties = {
 };
 
 function DecisionNode({ data, selected }: NodeProps) {
-  const { summary, status } = data as { summary: string; status: Status };
+  const { summary, status, priority } = data as {
+    summary: string;
+    status: Status;
+    priority: Priority;
+  };
   const truncated =
     summary.length > 60 ? summary.slice(0, 57) + "..." : summary;
-  const palette = STATUS_PALETTE[status] ?? STATUS_PALETTE.proposed;
+  const style = nodeStyleFor({ status, priority });
 
   return (
     <div
-      className="bg-content1 text-foreground border-2 rounded-lg px-3 py-2 shadow-md"
+      className="bg-content1 text-foreground rounded-lg px-3 py-2 shadow-md"
       style={{
-        borderColor: palette.ring,
+        borderWidth: 2,
+        borderStyle: style.dashed ? "dashed" : "solid",
+        borderColor: style.ring,
         minWidth: 180,
         maxWidth: 230,
         fontSize: 12,
         boxShadow: selected
-          ? `0 0 0 2px ${palette.ring}, 0 6px 14px rgba(0,0,0,0.25)`
+          ? `0 0 0 2px ${style.ring}, 0 6px 14px rgba(0,0,0,0.25)`
           : undefined,
       }}
     >
-      {/* One source + one target on every side; ids match the names used by
-          chooseHandlePair below to pick the closest sides per edge. */}
+      {/* One source + one target on every side; ids match chooseHandlePair. */}
       <Handle id="t-top" type="target" position={Position.Top} style={HANDLE_STYLE} />
       <Handle id="t-left" type="target" position={Position.Left} style={HANDLE_STYLE} />
       <Handle id="t-bottom" type="target" position={Position.Bottom} style={HANDLE_STYLE} />
@@ -85,12 +125,19 @@ function DecisionNode({ data, selected }: NodeProps) {
       <div className="font-semibold leading-tight mb-1.5 text-foreground">
         {truncated}
       </div>
-      <span
-        className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold tracking-wide uppercase"
-        style={{ background: palette.chipBg, color: "white" }}
-      >
-        {humanStatus(status)}
-      </span>
+      <div className="flex items-center gap-1.5">
+        {/* Status chip — colour follows priority for proposed, status otherwise */}
+        <span
+          className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold tracking-wide uppercase"
+          style={{ background: style.ring, color: "white" }}
+        >
+          {style.label}
+        </span>
+        {/* Always show the status word so colour-only is never the only signal */}
+        <span className="text-[10px] text-default-500 uppercase tracking-wide">
+          {humanStatus(status)}
+        </span>
+      </div>
     </div>
   );
 }
@@ -104,13 +151,40 @@ const NODE_H = 72;
 
 /** Run dagre LR with sources (no incoming `blocks`) on the left.
  *  Returns nodes with computed centre positions; edges untouched.
+ *
+ *  Layout details that matter when the graph contains cycles or skip-rank
+ *  edges (e.g. `auth influences db` while `db blocks orm` blocks `auth`):
+ *    - Only `blocks` edges define the rank structure. Other relationship
+ *      types (influences, relates_to, supersedes) get IGNORED for ranking
+ *      but still rendered, so they don't distort the tree.
+ *    - acyclicer 'greedy' breaks any remaining cycles by reversing the
+ *      smallest set of edges, instead of crashing.
+ *    - Generous nodesep gives within-rank lanes for skip-edges to pass
+ *      through.
+ *    - ranker 'tight-tree' produces compact trees with sources on the left.
  */
 function applyDagreLR(nodes: Node[], edges: Edge[]): Node[] {
   const g = new dagre.graphlib.Graph();
-  g.setGraph({ rankdir: "LR", nodesep: 50, ranksep: 90, edgesep: 20 });
+  g.setGraph({
+    rankdir: "LR",
+    nodesep: 90, // within-rank vertical gap (LR -> y axis)
+    ranksep: 140, // between-rank horizontal gap
+    edgesep: 30,
+    marginx: 30,
+    marginy: 30,
+    acyclicer: "greedy",
+    ranker: "tight-tree",
+  });
   g.setDefaultEdgeLabel(() => ({}));
   for (const n of nodes) g.setNode(n.id, { width: NODE_W, height: NODE_H });
-  for (const e of edges) g.setEdge(e.source, e.target);
+  for (const e of edges) {
+    // Only structural edges drive the rank assignment. Soft edges still
+    // render but don't push nodes around (which produced the cramped
+    // layer-2 / influences overlap previously).
+    const data = e.data as { type?: string } | undefined;
+    if (data?.type && data.type !== "blocks") continue;
+    g.setEdge(e.source, e.target);
+  }
   dagre.layout(g);
   return nodes.map((n) => {
     const p = g.node(n.id);
@@ -152,7 +226,7 @@ function buildGraph(decisions: Decision[]) {
     id: d.id,
     type: "decision",
     position: { x: 0, y: 0 },
-    data: { summary: d.summary, status: d.status },
+    data: { summary: d.summary, status: d.status, priority: d.priority },
     draggable: false,
     connectable: false,
   }));
@@ -173,6 +247,9 @@ function buildGraph(decisions: Decision[]) {
         type: "smoothstep",
         animated: rel.type === "blocks",
         label: rel.type.replace("_", " "),
+        // Stash the rel type on the edge so the layout can distinguish
+        // structural edges (blocks) from soft ones.
+        data: { type: rel.type },
         style: {
           stroke: color,
           strokeWidth: 2.5,
