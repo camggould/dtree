@@ -9,7 +9,7 @@ import {
   type NodeProps,
 } from "@xyflow/react";
 import dagre from "@dagrejs/dagre";
-import { Button, ButtonGroup, Chip } from "@heroui/react";
+import { Button, ButtonGroup } from "@heroui/react";
 import { useParams } from "wouter";
 import { useDecisions } from "@/api/query";
 import { useAppStore } from "@/store/app";
@@ -22,53 +22,51 @@ import {
 import type { Decision, RelationshipType, Status } from "@/api/types.gen";
 import "@xyflow/react/dist/style.css";
 
-const STATUS_RING: Record<Status, string> = {
-  proposed: "rgb(59 130 246)",
-  decided: "rgb(34 197 94)",
-  out_of_scope: "rgb(107 114 128)",
-  superseded: "rgb(249 115 22)",
+// Higher-contrast ring/chip colors. Each status has a strong border + a
+// chip with white bold text on the same color — readable on light + dark
+// without further tweaking.
+const STATUS_PALETTE: Record<Status, { ring: string; chipBg: string }> = {
+  proposed:     { ring: "#1d4ed8", chipBg: "#1d4ed8" }, // blue-700
+  decided:      { ring: "#15803d", chipBg: "#15803d" }, // green-700
+  out_of_scope: { ring: "#475569", chipBg: "#475569" }, // slate-600
+  superseded:   { ring: "#c2410c", chipBg: "#c2410c" }, // orange-700
 };
 
 const EDGE_COLORS: Record<RelationshipType, string> = {
-  blocks: "#ef4444",
-  influences: "#eab308",
-  supersedes: "#f97316",
-  relates_to: "#3b82f6",
+  blocks:     "#dc2626", // red-600
+  influences: "#ca8a04", // yellow-600
+  supersedes: "#ea580c", // orange-600
+  relates_to: "#2563eb", // blue-600
 };
 
 function DecisionNode({ data, selected }: NodeProps) {
   const { summary, status } = data as { summary: string; status: Status };
   const truncated =
     summary.length > 60 ? summary.slice(0, 57) + "..." : summary;
-  const ring = STATUS_RING[status] ?? "#999";
+  const palette = STATUS_PALETTE[status] ?? STATUS_PALETTE.proposed;
 
   return (
     <div
-      className="bg-content1 text-foreground border-2 rounded-lg px-3 py-2 shadow-sm"
+      className="bg-content1 text-foreground border-2 rounded-lg px-3 py-2 shadow-md"
       style={{
-        borderColor: ring,
-        minWidth: 170,
-        maxWidth: 220,
+        borderColor: palette.ring,
+        minWidth: 180,
+        maxWidth: 230,
         fontSize: 12,
         boxShadow: selected
-          ? `0 0 0 2px ${ring}, 0 4px 12px rgba(0,0,0,0.15)`
+          ? `0 0 0 2px ${palette.ring}, 0 6px 14px rgba(0,0,0,0.25)`
           : undefined,
       }}
     >
-      <div className="font-semibold leading-tight mb-1">{truncated}</div>
-      <Chip
-        size="sm"
-        variant="flat"
-        style={{
-          background: ring,
-          color: "white",
-          fontSize: 10,
-          height: 18,
-          minHeight: 18,
-        }}
+      <div className="font-semibold leading-tight mb-1.5 text-foreground">
+        {truncated}
+      </div>
+      <span
+        className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold tracking-wide uppercase"
+        style={{ background: palette.chipBg, color: "white" }}
       >
         {humanStatus(status)}
-      </Chip>
+      </span>
     </div>
   );
 }
@@ -101,21 +99,27 @@ function buildGraph(decisions: Decision[]) {
         id,
         source: d.id,
         target: rel.target,
-        type: "default",
+        type: "smoothstep",
         animated: rel.type === "blocks",
         label: rel.type.replace("_", " "),
         style: {
           stroke: color,
-          strokeWidth: 2,
+          strokeWidth: 2.5,
           strokeDasharray: rel.type === "relates_to" ? "6 3" : undefined,
         },
-        labelStyle: { fill: color, fontSize: 10, fontWeight: 600 },
-        labelBgStyle: { fill: "var(--heroui-content1)", opacity: 0.9 },
+        labelStyle: {
+          fill: color,
+          fontSize: 11,
+          fontWeight: 700,
+        },
+        labelBgPadding: [4, 2],
+        labelBgBorderRadius: 4,
+        labelBgStyle: { fill: "white", fillOpacity: 0.85 },
         markerEnd: {
           type: MarkerType.ArrowClosed,
           color,
-          width: 18,
-          height: 18,
+          width: 22,
+          height: 22,
         },
       });
     }

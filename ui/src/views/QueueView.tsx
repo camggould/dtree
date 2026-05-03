@@ -1,5 +1,5 @@
-import { Card, CardBody, Chip, Spinner, Button } from "@heroui/react";
-import { useParams } from "wouter";
+import { Card, CardBody, Chip, Spinner, Button, Tabs, Tab } from "@heroui/react";
+import { useParams, useLocation } from "wouter";
 import { useQueue } from "@/api/query";
 import { useAppStore } from "@/store/app";
 import { humanPriority, humanStatus, statusColor } from "@/util/labels";
@@ -86,15 +86,32 @@ export function QueueView() {
   const tree = params.tree ?? "";
   const kind = (params.kind ?? "quick-wins") as "quick-wins" | "spearhead";
 
+  const [, navigate] = useLocation();
   const { data, isLoading, isError } = useQueue(tree, kind);
-  const title = kind === "spearhead" ? "Spearhead queue" : "Quick wins queue";
 
   return (
     <div className="p-6 space-y-4 max-w-5xl mx-auto">
-      <h1 className="text-2xl font-bold">{title}</h1>
+      <div>
+        <h1 className="text-2xl font-bold mb-1">Queues</h1>
+        <p className="text-sm text-default-500">
+          Two ways to find the next thing to work on.
+        </p>
+      </div>
+
+      <Tabs
+        aria-label="Queue mode"
+        selectedKey={kind}
+        onSelectionChange={(k) =>
+          navigate(`/trees/${tree}/queue/${String(k)}`)
+        }
+      >
+        <Tab key="quick-wins" title="Quick wins" />
+        <Tab key="spearhead" title="Spearhead" />
+      </Tabs>
+
       <p className="text-sm text-default-500">
         {kind === "spearhead"
-          ? "Decisions blocking the most downstream work."
+          ? "Decisions blocking the most downstream work — unblock these to free up others."
           : "Proposed decisions whose blockers are all resolved — ready to close."}
       </p>
 

@@ -1,9 +1,24 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { apiFetch, ApiError } from "@/api/client";
 import type { Decision, Relationship, RelationshipType } from "@/api/types.gen";
 import { keys } from "@/api/query";
 
 type AddToast = (opts: { title: string; description?: string; color?: string }) => void;
+
+/** Invalidate every query that could change as a result of mutating one
+ *  decision. Includes the decision itself, the tree's decision list, the
+ *  tree's metrics, the per-decision history, and the audit log. Cheap.
+ */
+function invalidateAllForDecision(
+  qc: QueryClient,
+  tree: string,
+  id: string,
+): void {
+  invalidateAllForDecision(qc, tree, id);
+  qc.invalidateQueries({ queryKey: keys.history(tree, id) });
+  qc.invalidateQueries({ queryKey: keys.metrics(tree) });
+  qc.invalidateQueries({ queryKey: ["audit"] }); // partial match — all audit
+}
 
 function handle412(err: unknown, refetch: () => void, addToast?: AddToast) {
   if (err instanceof ApiError && err.status === 412) {
@@ -40,8 +55,7 @@ export function useDecide(tree: string, id: string, addToast?: AddToast) {
       });
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: keys.decision(tree, id) });
-      qc.invalidateQueries({ queryKey: keys.decisions(tree) });
+      invalidateAllForDecision(qc, tree, id);
     },
     onError: (err) => {
       handle412(err, () => qc.invalidateQueries({ queryKey: keys.decision(tree, id) }), addToast);
@@ -59,8 +73,7 @@ export function useUndecide(tree: string, id: string, addToast?: AddToast) {
         headers: ifMatch ? { "If-Match": ifMatch } : {},
       }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: keys.decision(tree, id) });
-      qc.invalidateQueries({ queryKey: keys.decisions(tree) });
+      invalidateAllForDecision(qc, tree, id);
     },
     onError: (err) => {
       handle412(err, () => qc.invalidateQueries({ queryKey: keys.decision(tree, id) }), addToast);
@@ -80,8 +93,7 @@ export function useScopeOut(tree: string, id: string, addToast?: AddToast) {
       });
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: keys.decision(tree, id) });
-      qc.invalidateQueries({ queryKey: keys.decisions(tree) });
+      invalidateAllForDecision(qc, tree, id);
     },
     onError: (err) => {
       handle412(err, () => qc.invalidateQueries({ queryKey: keys.decision(tree, id) }), addToast);
@@ -101,8 +113,7 @@ export function useSupersede(tree: string, id: string, addToast?: AddToast) {
       });
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: keys.decision(tree, id) });
-      qc.invalidateQueries({ queryKey: keys.decisions(tree) });
+      invalidateAllForDecision(qc, tree, id);
     },
     onError: (err) => {
       handle412(err, () => qc.invalidateQueries({ queryKey: keys.decision(tree, id) }), addToast);
@@ -120,8 +131,7 @@ export function useRestore(tree: string, id: string, addToast?: AddToast) {
         headers: ifMatch ? { "If-Match": ifMatch } : {},
       }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: keys.decision(tree, id) });
-      qc.invalidateQueries({ queryKey: keys.decisions(tree) });
+      invalidateAllForDecision(qc, tree, id);
     },
     onError: (err) => {
       handle412(err, () => qc.invalidateQueries({ queryKey: keys.decision(tree, id) }), addToast);
@@ -141,8 +151,7 @@ export function useRelate(tree: string, id: string, addToast?: AddToast) {
       });
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: keys.decision(tree, id) });
-      qc.invalidateQueries({ queryKey: keys.decisions(tree) });
+      invalidateAllForDecision(qc, tree, id);
     },
     onError: (err) => {
       handle412(err, () => qc.invalidateQueries({ queryKey: keys.decision(tree, id) }), addToast);
@@ -162,8 +171,7 @@ export function useUnrelate(tree: string, id: string, addToast?: AddToast) {
       });
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: keys.decision(tree, id) });
-      qc.invalidateQueries({ queryKey: keys.decisions(tree) });
+      invalidateAllForDecision(qc, tree, id);
     },
     onError: (err) => {
       handle412(err, () => qc.invalidateQueries({ queryKey: keys.decision(tree, id) }), addToast);
@@ -183,8 +191,7 @@ export function useUpdateDecision(tree: string, id: string, addToast?: AddToast)
       });
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: keys.decision(tree, id) });
-      qc.invalidateQueries({ queryKey: keys.decisions(tree) });
+      invalidateAllForDecision(qc, tree, id);
     },
     onError: (err) => {
       handle412(err, () => qc.invalidateQueries({ queryKey: keys.decision(tree, id) }), addToast);

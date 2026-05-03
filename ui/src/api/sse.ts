@@ -88,6 +88,9 @@ function invalidateForEvent(event: DtreeEvent): void {
       queryKey: keys.decision(eventTree, event.id),
     });
     void queryClient.invalidateQueries({
+      queryKey: keys.history(eventTree, event.id),
+    });
+    void queryClient.invalidateQueries({
       queryKey: keys.metrics(eventTree),
     });
   }

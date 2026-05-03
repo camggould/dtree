@@ -16,9 +16,15 @@ import {
   Input,
   Textarea,
   Divider,
+  Table,
+  TableHeader,
+  TableColumn,
+  TableBody,
+  TableRow,
+  TableCell,
 } from "@heroui/react";
-import { Check, X, Sparkles } from "lucide-react";
-import { useDecision, useHistory } from "@/api/query";
+import { Check, X, Sparkles, ArrowLeft, ExternalLink } from "lucide-react";
+import { useDecision, useHistory, useDecisions } from "@/api/query";
 import {
   useDecide,
   useUndecide,
@@ -73,6 +79,8 @@ function DecisionModalBody({
 }) {
   const { data: decision, isLoading } = useDecision(tree, id);
   const handle = useAppStore((s) => s.currentHandle);
+  const stackDepth = useAppStore((s) => s.decisionStack.length);
+  const popDecision = useAppStore((s) => s.popDecision);
 
   if (isLoading || !decision) {
     return (
@@ -89,6 +97,17 @@ function DecisionModalBody({
   return (
     <>
       <ModalHeader className="flex flex-col gap-2 pb-2">
+        {stackDepth > 0 && (
+          <Button
+            variant="light"
+            size="sm"
+            startContent={<ArrowLeft size={14} />}
+            onPress={popDecision}
+            className="self-start -ml-2 -mt-1"
+          >
+            Back to previous decision
+          </Button>
+        )}
         <div className="flex items-start justify-between gap-3">
           <h2 className="text-xl font-semibold leading-tight">
             {decision.summary}
@@ -118,10 +137,10 @@ function DecisionModalBody({
             <OverviewTab decision={decision} handle={handle} recExists={recExists} />
           </Tab>
           <Tab key="history" title="History">
-            <HistoryTab tree={tree} id={id} />
+            <HistoryTab tree={tree} id={id} decision={decision} />
           </Tab>
           <Tab key="audit" title="Audit flow">
-            <AuditFlow tree={tree} id={id} />
+            <AuditFlow tree={tree} id={id} decision={decision} />
           </Tab>
         </Tabs>
       </ModalBody>
@@ -160,7 +179,7 @@ function OverviewTab({
       {decision.status === "decided" && decision.actual_choice && (
         <section>
           <SectionLabel>Outcome</SectionLabel>
-          <Card className="bg-success-50 dark:bg-success-900/40 border border-success-300 dark:border-success-600">
+          <Card className="bg-success-50 dark:bg-success-950 border border-success-300 dark:border-success-700">
             <CardBody className="gap-1 text-foreground">
               <div className="font-semibold">{decision.actual_choice}</div>
               {decision.actual_choice_reason && (
@@ -202,26 +221,88 @@ function OverviewTab({
       )}
 
       {(decision.relationships ?? []).length > 0 && (
-        <section>
-          <SectionLabel>Relationships</SectionLabel>
-          <div className="flex flex-col gap-1">
-            {(decision.relationships ?? []).map((r) => (
-              <div
-                key={`${r.type}-${r.target}`}
-                className="text-sm flex gap-2 items-center"
-              >
-                <Chip size="sm" variant="flat" color="warning">
-                  {r.type.replace("_", " ")}
-                </Chip>
-                <span className="font-mono text-xs text-default-500">
-                  {r.target.slice(0, 8)}
-                </span>
-              </div>
-            ))}
-          </div>
-        </section>
+        <RelationshipsSection
+          tree={decision.tree}
+          relationships={decision.relationships ?? []}
+        />
       )}
     </div>
+  );
+}
+
+function RelationshipsSection({
+  tree,
+  relationships,
+}: {
+  tree: string;
+  relationships: import("@/api/types.gen").Relationship[];
+}) {
+  const pushDecision = useAppStore((s) => s.pushDecision);
+  // Pull all decisions in this tree to look up target summaries.
+  const { data: page } = useDecisions(tree);
+  const byId = new Map((page?.items ?? []).map((d) => [d.id, d]));
+
+  const rows = relationships.map((r) => ({
+    rel: r,
+    target: byId.get(r.target),
+  }));
+
+  return (
+    <section>
+      <SectionLabel>Relationships</SectionLabel>
+      <Table aria-label="Relationships" removeWrapper isStriped>
+        <TableHeader>
+          <TableColumn>Type</TableColumn>
+          <TableColumn>Target</TableColumn>
+          <TableColumn>Status</TableColumn>
+          <TableColumn> </TableColumn>
+        </TableHeader>
+        <TableBody>
+          {rows.map(({ rel, target }) => (
+            <TableRow key={`${rel.type}-${rel.target}`}>
+              <TableCell>
+                <Chip size="sm" variant="flat" color="warning">
+                  {rel.type.replace("_", " ")}
+                </Chip>
+              </TableCell>
+              <TableCell>
+                <button
+                  type="button"
+                  onClick={() => pushDecision(tree, rel.target)}
+                  className="text-left hover:text-primary"
+                >
+                  {target?.summary ?? (
+                    <span className="font-mono text-default-400">
+                      {rel.target.slice(0, 8)}
+                    </span>
+                  )}
+                </button>
+              </TableCell>
+              <TableCell>
+                {target ? (
+                  <Chip size="sm" variant="flat" color={statusColor(target.status)}>
+                    {humanStatus(target.status)}
+                  </Chip>
+                ) : (
+                  <span className="text-xs text-default-400">unresolved</span>
+                )}
+              </TableCell>
+              <TableCell>
+                <Button
+                  size="sm"
+                  variant="light"
+                  isIconOnly
+                  onPress={() => pushDecision(tree, rel.target)}
+                  aria-label="Open"
+                >
+                  <ExternalLink size={14} />
+                </Button>
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </section>
   );
 }
 
@@ -253,7 +334,7 @@ function RecommendationBlock({
   return (
     <section>
       <SectionLabel>Recommendation</SectionLabel>
-      <Card className="bg-primary-50 dark:bg-primary-900/40 border border-primary-300 dark:border-primary-600">
+      <Card className="bg-primary-50 dark:bg-primary-950 border border-primary-300 dark:border-primary-700">
         <CardBody className="gap-2 text-foreground">
           {decision.recommended_summary && (
             <div className="font-semibold text-foreground">
@@ -296,7 +377,15 @@ function RecommendationBlock({
 
 // ---- History tab --------------------------------------------------------
 
-function HistoryTab({ tree, id }: { tree: string; id: string }) {
+function HistoryTab({
+  tree,
+  id,
+  decision,
+}: {
+  tree: string;
+  id: string;
+  decision: import("@/api/types.gen").Decision;
+}) {
   const { data: events, isLoading } = useHistory(tree, id);
   if (isLoading) return <Spinner size="sm" />;
   const list = events ?? [];
@@ -307,7 +396,7 @@ function HistoryTab({ tree, id }: { tree: string; id: string }) {
       {list.map((e) => {
         const after = (e.payload?.after ?? {}) as Record<string, unknown>;
         const before = (e.payload?.before ?? {}) as Record<string, unknown>;
-        const summary = describeEvent(e.action, after, before);
+        const summary = describeEvent(e.action, after, before, decision);
         return (
           <div
             key={e.event_id}
@@ -334,32 +423,52 @@ function HistoryTab({ tree, id }: { tree: string; id: string }) {
   );
 }
 
-/** Build a one-line plain-language summary for an audit event's payload. */
+/** Build a one-line plain-language summary for an audit event's payload.
+ *  Uses the parent decision as a fallback context when the event payload
+ *  doesn't carry recommendation fields directly (e.g. some server paths
+ *  emit a partial diff in `after` rather than the full record).
+ */
 function describeEvent(
   action: string,
   after: Record<string, unknown>,
   _before: Record<string, unknown>,
+  decision: import("@/api/types.gen").Decision,
 ): string | null {
   if (action === "decide") {
-    const choice = after.actual_choice as string | undefined;
-    const recommended = after.recommended_summary as string | undefined;
-    const isRec = after.is_recommended as boolean | undefined;
+    const choice =
+      (after.actual_choice as string | undefined) ?? decision.actual_choice;
     if (!choice) return null;
-    if (recommended) {
-      const accepted = isRec === true || choice === recommended;
-      return accepted
-        ? `chose “${choice}” (followed recommendation)`
-        : `chose “${choice}” (overrode recommendation “${recommended}”)`;
-    }
+
+    // Prefer the explicit is_recommended flag set by the API; fall back to
+    // matching the choice against whatever recommendation is on the
+    // decision now (the after payload may not include it on partial diffs).
+    const isRecAfter = after.is_recommended as boolean | undefined;
+    const recAfter = after.recommended_summary as string | undefined;
+    const recCurrent = decision.recommended_summary;
+    const recommended = recAfter ?? recCurrent;
+
+    const recExisted = Boolean(recommended);
+    const followed =
+      isRecAfter === true ||
+      (recommended !== undefined && choice === recommended);
+
+    if (followed) return `chose “${choice}” (followed recommendation)`;
+    if (recExisted)
+      return `chose “${choice}” (overrode recommendation “${recommended}”)`;
     return `chose “${choice}” (no recommendation existed)`;
   }
   if (action === "scope_out") {
-    const reason = after.scope_out_reason as string | undefined;
+    const reason =
+      (after.scope_out_reason as string | undefined) ??
+      (after.reason as string | undefined);
     return reason ? `reason: ${reason}` : null;
   }
   if (action === "supersede") {
     const by = after.superseded_by as string | undefined;
     return by ? `replaced by ${by.slice(0, 8)}` : null;
+  }
+  if (action === "undecide") {
+    return "cleared the previous outcome";
   }
   if (action === "create") {
     const summary = after.summary as string | undefined;

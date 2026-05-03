@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import { Chip, Dropdown, DropdownTrigger, DropdownMenu, DropdownItem, Button, Input } from "@heroui/react";
 import { Plus, X } from "lucide-react";
 import { useSearch, useLocation } from "wouter";
@@ -24,11 +25,12 @@ export function useFilterParams(filters: FilterDef[]): [
   (key: string, value: string | string[] | undefined) => void,
   (key: string) => void,
 ] {
-  const [search, setSearch] = useSearch() as unknown as [string, (s: string) => void];
-  // wouter's useSearch returns a string; useLocation's navigate can update it
-  // We'll use useLocation to get navigate for setting the query string.
-  const [, navigate] = useLocation();
-
+  // wouter's useSearch returns the raw query string (no leading "?").
+  // useLocation() returns the path RELATIVE to the Router base — pass it
+  // back to navigate() unmodified to avoid double-prepending the base
+  // (which produced /ui/ui/... earlier).
+  const search = useSearch();
+  const [location, navigate] = useLocation();
   const params = new URLSearchParams(search);
 
   const values: Record<string, string | string[]> = {};
@@ -53,9 +55,7 @@ export function useFilterParams(filters: FilterDef[]): [
       }
     }
     const qs = next.toString();
-    navigate(window.location.pathname + (qs ? `?${qs}` : ""), { replace: true });
-    // Also trigger the raw setter so wouter rerenders
-    setSearch(qs);
+    navigate(location + (qs ? `?${qs}` : ""), { replace: true });
   };
 
   const clearFilter = (key: string) => setFilter(key, undefined);
@@ -163,31 +163,72 @@ export function FilterPills({ filters, values, onChange }: FilterPillsProps) {
         </Dropdown>
       )}
 
-      {/* Text filter inputs (always shown) */}
+      {/* Text filter inputs — debounced */}
       {textFilters.map((f) => (
-        <Input
+        <DebouncedTextFilter
           key={f.key}
-          size="sm"
-          placeholder={`Filter ${f.label}`}
+          def={f}
           value={(values[f.key] as string | undefined) ?? ""}
-          onChange={(e) => {
-            const val = e.target.value;
-            onChange(f.key, val || undefined);
-          }}
-          className="w-40"
-          aria-label={`Filter by ${f.label}`}
-          endContent={
-            values[f.key] ? (
-              <button
-                aria-label={`Clear ${f.label} filter`}
-                onClick={() => onChange(f.key, undefined)}
-              >
-                <X size={12} />
-              </button>
-            ) : null
-          }
+          onChange={(v) => onChange(f.key, v || undefined)}
         />
       ))}
     </div>
+  );
+}
+
+function DebouncedTextFilter({
+  def,
+  value,
+  onChange,
+}: {
+  def: FilterDef;
+  value: string;
+  onChange: (v: string | undefined) => void;
+}) {
+  // Local state for the input; only push to URL after the user pauses typing.
+  const [local, setLocal] = useState(value);
+  const lastPushed = useRef(value);
+
+  // Pull external changes (e.g. URL nav, clear button) back into the input.
+  useEffect(() => {
+    if (value !== lastPushed.current) {
+      setLocal(value);
+      lastPushed.current = value;
+    }
+  }, [value]);
+
+  // Push local changes after 250ms of inactivity.
+  useEffect(() => {
+    if (local === lastPushed.current) return;
+    const t = setTimeout(() => {
+      lastPushed.current = local;
+      onChange(local || undefined);
+    }, 250);
+    return () => clearTimeout(t);
+  }, [local, onChange]);
+
+  return (
+    <Input
+      size="sm"
+      placeholder={`Filter ${def.label}`}
+      value={local}
+      onValueChange={setLocal}
+      className="w-40"
+      aria-label={`Filter by ${def.label}`}
+      endContent={
+        local ? (
+          <button
+            aria-label={`Clear ${def.label} filter`}
+            onClick={() => {
+              setLocal("");
+              lastPushed.current = "";
+              onChange(undefined);
+            }}
+          >
+            <X size={12} />
+          </button>
+        ) : null
+      }
+    />
   );
 }

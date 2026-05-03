@@ -22,9 +22,19 @@ interface SessionSlice {
 // Decision modal — opened from anywhere (graph, kanban, queue, audit, sidebar,
 // drill-down list). Lifted to the store so a single <DecisionModal/> at the
 // app root handles it; also keeps the modal alive across route changes.
+//
+// `stack` records what was open before the current modal so a related-decision
+// click can swap the modal contents and "Back" returns to the previous one.
 interface DecisionModalSlice {
   decisionModal: { tree: string; id: string } | null;
+  decisionStack: { tree: string; id: string }[];
+  /** Open without remembering the previous modal (entry from outside). */
   openDecision: (tree: string, id: string) => void;
+  /** Open from inside an open modal; current is pushed onto stack. */
+  pushDecision: (tree: string, id: string) => void;
+  /** Pop the most recent stacked modal (Back). */
+  popDecision: () => void;
+  /** Close everything and reset the stack. */
   closeDecision: () => void;
 }
 
@@ -51,8 +61,29 @@ export const useAppStore = create<AppStore>()(
 
       // Decision modal — not persisted (resets on reload)
       decisionModal: null,
-      openDecision: (tree, id) => set({ decisionModal: { tree, id } }),
-      closeDecision: () => set({ decisionModal: null }),
+      decisionStack: [],
+      openDecision: (tree, id) =>
+        set({ decisionModal: { tree, id }, decisionStack: [] }),
+      pushDecision: (tree, id) =>
+        set((s) => ({
+          decisionModal: { tree, id },
+          decisionStack: s.decisionModal
+            ? [...s.decisionStack, s.decisionModal]
+            : s.decisionStack,
+        })),
+      popDecision: () =>
+        set((s) => {
+          if (s.decisionStack.length === 0) {
+            return { decisionModal: null, decisionStack: [] };
+          }
+          const previous = s.decisionStack[s.decisionStack.length - 1];
+          return {
+            decisionModal: previous,
+            decisionStack: s.decisionStack.slice(0, -1),
+          };
+        }),
+      closeDecision: () =>
+        set({ decisionModal: null, decisionStack: [] }),
     }),
     {
       name: "dtree-app",
