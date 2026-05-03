@@ -158,7 +158,9 @@ export function useAuditList(
         next_cursor: data.next_cursor,
       };
     },
-    enabled: Boolean(tree),
+    // Always enabled: tree="" is a valid request (site-wide audit feed —
+    // used by HomeView's RecentActivity). Per-tree filtering is opt-in via
+    // the tree argument.
   });
 }
 
