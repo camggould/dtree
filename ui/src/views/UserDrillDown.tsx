@@ -336,6 +336,7 @@ function RecommenderSection({
   handle: string;
   drill: (b: UserBucket, title: string, description?: string) => void;
 }) {
+  const k = f.byKindOfDecider;
   return (
     <Card>
       <CardHeader>
@@ -343,7 +344,7 @@ function RecommenderSection({
           <h2 className="text-lg font-semibold">
             <span className="text-secondary">Recommended</span> by {handle}
           </h2>
-          <Tooltip content="When this person suggested a specific choice. The recommendation can be on a decision they opened or on someone else's.">
+          <Tooltip content="When this person suggested a specific choice. We split acceptance by who actually made the call: themselves (autonomous), another agent, or a human.">
             <Info size={14} className="text-default-400 cursor-help" />
           </Tooltip>
         </div>
@@ -372,7 +373,7 @@ function RecommenderSection({
             }
           />
           <MetricBlock
-            label="Followed"
+            label="Followed overall"
             value={pct(f.acceptance.rate)}
             subtext={`${f.acceptance.accepted}/${f.acceptance.total}`}
             color="success"
@@ -386,57 +387,77 @@ function RecommenderSection({
         </div>
 
         {f.decidedCount > 0 && (
-          <div className="space-y-2">
-            <div className="text-sm font-medium">
-              How {handle}'s suggestions fared, by who decided
+          <div className="space-y-2 pt-1 border-t border-divider">
+            <div className="text-sm font-medium pt-2">
+              Acceptance, by who made the call
             </div>
-            {f.byKindOfDecider.human.total > 0 && (
+            {k.self.total > 0 && (
               <RateRow
-                label="When humans decided"
-                stat={f.byKindOfDecider.human}
-                color="primary"
-                onClick={() =>
-                  drill(
-                    {
-                      facet: "recommender",
-                      key: "byDeciderKind",
-                      kind: "human",
-                    },
-                    `${handle}'s suggestions decided by humans`,
-                  )
-                }
-              />
-            )}
-            {f.byKindOfDecider.agent.total > 0 && (
-              <RateRow
-                label="When agents decided"
-                stat={f.byKindOfDecider.agent}
-                color="secondary"
-                onClick={() =>
-                  drill(
-                    {
-                      facet: "recommender",
-                      key: "byDeciderKind",
-                      kind: "agent",
-                    },
-                    `${handle}'s suggestions decided by agents`,
-                  )
-                }
-              />
-            )}
-            {f.byKindOfDecider.unknown.total > 0 && (
-              <RateRow
-                label="Decider unknown"
-                stat={f.byKindOfDecider.unknown}
+                label="Self (autonomous)"
+                stat={k.self}
                 color="default"
                 onClick={() =>
                   drill(
                     {
                       facet: "recommender",
-                      key: "byDeciderKind",
-                      kind: "unknown",
+                      key: "byDeciderBucket",
+                      bucket: "self",
                     },
-                    `${handle}'s suggestions decided by an unknown actor`,
+                    `${handle} accepted their own recommendation`,
+                    "The recommender and the decider are the same person.",
+                  )
+                }
+              />
+            )}
+            {k.otherAgent.total > 0 && (
+              <RateRow
+                label="Another agent decided"
+                stat={k.otherAgent}
+                color="secondary"
+                onClick={() =>
+                  drill(
+                    {
+                      facet: "recommender",
+                      key: "byDeciderBucket",
+                      bucket: "otherAgent",
+                    },
+                    `${handle}'s suggestions accepted by another agent`,
+                    "Cross-agent acceptance — a different agent took the call.",
+                  )
+                }
+              />
+            )}
+            {k.otherHuman.total > 0 && (
+              <RateRow
+                label="A human decided"
+                stat={k.otherHuman}
+                color="primary"
+                onClick={() =>
+                  drill(
+                    {
+                      facet: "recommender",
+                      key: "byDeciderBucket",
+                      bucket: "otherHuman",
+                    },
+                    `${handle}'s suggestions accepted by a human`,
+                    "The trust signal: how often a human acted on this person's suggestion.",
+                  )
+                }
+              />
+            )}
+            {k.unknownActor.total > 0 && (
+              <RateRow
+                label="Decider unknown"
+                stat={k.unknownActor}
+                color="default"
+                onClick={() =>
+                  drill(
+                    {
+                      facet: "recommender",
+                      key: "byDeciderBucket",
+                      bucket: "unknownActor",
+                    },
+                    `${handle}'s suggestions decided by an unrecognised actor`,
                   )
                 }
               />
@@ -542,6 +563,7 @@ function DeciderSection({
                     drill(
                       { facet: "decider", key: "noRec" },
                       `${handle} decided without a recommendation`,
+                      "Truly autonomous calls — nobody had suggested anything.",
                     ),
                 },
               ]}
@@ -551,22 +573,37 @@ function DeciderSection({
           {f.followedRec > 0 && (
             <div>
               <div className="text-sm font-medium mb-2">
-                Who they listened to
+                Who they listened to (when they followed)
               </div>
               <PieBreakdown
                 segments={[
                   {
-                    label: "Agent",
-                    value: f.followedFromAgent,
+                    label: "Self",
+                    value: f.followedFromSelf,
+                    color: "#64748b",
+                    onClick: () =>
+                      drill(
+                        {
+                          facet: "decider",
+                          key: "followedFromSource",
+                          source: "self",
+                        },
+                        `${handle} followed their own recommendation`,
+                        "Self-acceptance — they recommended and they decided.",
+                      ),
+                  },
+                  {
+                    label: "Other agent",
+                    value: f.followedFromOtherAgent,
                     color: "#a855f7",
                     onClick: () =>
                       drill(
                         {
                           facet: "decider",
-                          key: "followedFromKind",
-                          kind: "agent",
+                          key: "followedFromSource",
+                          source: "otherAgent",
                         },
-                        `${handle} followed an agent's recommendation`,
+                        `${handle} followed another agent's recommendation`,
                       ),
                   },
                   {
@@ -577,8 +614,8 @@ function DeciderSection({
                       drill(
                         {
                           facet: "decider",
-                          key: "followedFromKind",
-                          kind: "human",
+                          key: "followedFromSource",
+                          source: "human",
                         },
                         `${handle} followed a human's recommendation`,
                       ),
@@ -591,10 +628,10 @@ function DeciderSection({
                       drill(
                         {
                           facet: "decider",
-                          key: "followedFromKind",
-                          kind: "unknown",
+                          key: "followedFromSource",
+                          source: "unknown",
                         },
-                        `Followed an unrecognized recommender`,
+                        `Followed an unrecognised recommender`,
                       ),
                   },
                 ]}
@@ -603,38 +640,55 @@ function DeciderSection({
           )}
         </div>
 
-        {(f.agentTrust.total > 0 || f.humanTrust.total > 0) && (
+        {(f.selfTrust.total > 0 ||
+          f.otherAgentTrust.total > 0 ||
+          f.humanTrust.total > 0) && (
           <div className="space-y-2 pt-2 border-t border-default-200">
             <div className="text-sm font-medium flex items-center gap-2">
-              Trust profile
-              <Tooltip content="Of all decisions where a recommendation was on the table and this person decided, what fraction did they follow — split by whether the recommender was an agent or a human.">
+              Acceptance rate, by recommender
+              <Tooltip content="Of all decisions where a recommendation was on the table and this person decided, what fraction did they follow — split by whether the recommender was themselves, another agent, or a human.">
                 <Info size={12} className="text-default-400 cursor-help" />
               </Tooltip>
             </div>
-            {f.agentTrust.total > 0 && (
+            {f.selfTrust.total > 0 && (
               <RateRow
-                label="Trusts agents"
-                stat={f.agentTrust}
+                label="Their own"
+                stat={f.selfTrust}
+                color="default"
+                onClick={() =>
+                  drill(
+                    { facet: "decider", key: "trustSource", source: "self" },
+                    `${handle}'s decisions where they recommended themselves`,
+                  )
+                }
+              />
+            )}
+            {f.otherAgentTrust.total > 0 && (
+              <RateRow
+                label="Another agent's"
+                stat={f.otherAgentTrust}
                 color="secondary"
                 onClick={() =>
                   drill(
-                    { facet: "decider", key: "trustKind", kind: "agent" },
-                    `${handle}'s decisions where an agent recommended`,
-                    "Includes both followed and overridden — modal will mix outcomes.",
+                    {
+                      facet: "decider",
+                      key: "trustSource",
+                      source: "otherAgent",
+                    },
+                    `${handle}'s decisions where another agent recommended`,
                   )
                 }
               />
             )}
             {f.humanTrust.total > 0 && (
               <RateRow
-                label="Trusts humans"
+                label="A human's"
                 stat={f.humanTrust}
                 color="primary"
                 onClick={() =>
                   drill(
-                    { facet: "decider", key: "trustKind", kind: "human" },
+                    { facet: "decider", key: "trustSource", source: "human" },
                     `${handle}'s decisions where a human recommended`,
-                    "Includes both followed and overridden — modal will mix outcomes.",
                   )
                 }
               />

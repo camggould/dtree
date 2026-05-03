@@ -103,28 +103,35 @@ export interface RecommenderFacet {
   totalRecommended: number; // recommended_by === handle (any status)
   decidedCount: number; // ...where status === "decided"
   acceptance: RateStat; // accepted / decidedCount
+  // Three explicit deciding-actor buckets, so users can disentangle
+  // "I followed my own recommendation" (self) from "another agent followed
+  // it" (cross-agent) from "a human followed it" (cross-kind trust signal).
   byKindOfDecider: {
-    human: RateStat;
-    agent: RateStat;
-    unknown: RateStat;
+    self: RateStat;
+    otherAgent: RateStat;
+    otherHuman: RateStat;
+    unknownActor: RateStat;
   };
 }
 
 export interface DeciderFacet {
   totalDecided: number;
-  followedRec: number;        // accepted recommendation (rec existed and matched)
-  overrodeRec: number;        // rec existed but they chose differently
-  noRecExisted: number;       // no recommendation existed
+  followedRec: number; // accepted recommendation (rec existed and matched)
+  overrodeRec: number; // rec existed but they chose differently
+  noRecExisted: number; // no recommendation existed
   acceptanceWhenRecExisted: RateStat;
 
   // Of the decisions where they followed a recommendation, who recommended?
-  followedFromAgent: number;
+  // Self vs another-agent vs human is the meaningful split.
+  followedFromSelf: number;
+  followedFromOtherAgent: number;
   followedFromHuman: number;
   followedFromUnknown: number;
 
-  // Trust profile: of all decided-with-rec, what % did they accept by recommender kind?
-  agentTrust: RateStat; // total = decisions decided where recommender is agent
-  humanTrust: RateStat;
+  // Trust profile: rate of acceptance when the recommender was that source.
+  selfTrust: RateStat;        // own recs they accepted (autonomy)
+  otherAgentTrust: RateStat;  // other-agent recs they accepted
+  humanTrust: RateStat;       // human recs they accepted
 }
 
 export interface UserStats {
@@ -150,14 +157,26 @@ export type UserBucket =
   | { facet: "recommender"; key: "decided" }
   | { facet: "recommender"; key: "accepted" }
   | { facet: "recommender"; key: "overridden" }
-  | { facet: "recommender"; key: "byDeciderKind"; kind: "agent" | "human" | "unknown" }
+  | {
+      facet: "recommender";
+      key: "byDeciderBucket";
+      bucket: "self" | "otherAgent" | "otherHuman" | "unknownActor";
+    }
   // decider facet
   | { facet: "decider"; key: "all" }
   | { facet: "decider"; key: "followedRec" }
   | { facet: "decider"; key: "overrodeRec" }
   | { facet: "decider"; key: "noRec" }
-  | { facet: "decider"; key: "followedFromKind"; kind: "agent" | "human" | "unknown" }
-  | { facet: "decider"; key: "trustKind"; kind: "agent" | "human" };
+  | {
+      facet: "decider";
+      key: "followedFromSource";
+      source: "self" | "otherAgent" | "human" | "unknown";
+    }
+  | {
+      facet: "decider";
+      key: "trustSource";
+      source: "self" | "otherAgent" | "human";
+    };
 
 export function decisionsForUserBucket(
   handle: string,
@@ -185,11 +204,18 @@ export function decisionsForUserBucket(
     const recDecided = recommended.filter((d) => d.status === "decided");
     if (bucket.key === "decided") return recDecided;
     if (bucket.key === "accepted") return recDecided.filter(isAccepted);
-    if (bucket.key === "overridden") return recDecided.filter((d) => !isAccepted(d));
-    if (bucket.key === "byDeciderKind") {
+    if (bucket.key === "overridden")
+      return recDecided.filter((d) => !isAccepted(d));
+    if (bucket.key === "byDeciderBucket") {
       return recDecided.filter((d) => {
         const decider = (d.decided_by ?? [])[0];
-        return actorKind(actors, decider) === bucket.kind;
+        if (bucket.bucket === "self") return decider === handle;
+        if (decider === handle) return false;
+        const k = actorKind(actors, decider);
+        if (bucket.bucket === "otherAgent") return k === "agent";
+        if (bucket.bucket === "otherHuman") return k === "human";
+        if (bucket.bucket === "unknownActor") return k === "unknown";
+        return false;
       });
     }
     return [];
@@ -206,20 +232,28 @@ export function decisionsForUserBucket(
     return decidedByUser.filter((d) => hasRecommendation(d) && !isAccepted(d));
   if (bucket.key === "noRec")
     return decidedByUser.filter((d) => !hasRecommendation(d));
-  if (bucket.key === "followedFromKind") {
+
+  const matchSource = (d: Decision) => {
+    const recBy = d.recommended_by;
+    if (bucket.key === "followedFromSource" || bucket.key === "trustSource") {
+      const src = bucket.source;
+      if (src === "self") return recBy === handle;
+      if (recBy === handle) return false;
+      const k = actorKind(actors, recBy);
+      if (src === "otherAgent") return k === "agent";
+      if (src === "human") return k === "human";
+      if (src === "unknown") return k === "unknown";
+    }
+    return false;
+  };
+
+  if (bucket.key === "followedFromSource") {
     return decidedByUser.filter(
-      (d) =>
-        hasRecommendation(d) &&
-        isAccepted(d) &&
-        actorKind(actors, d.recommended_by) === bucket.kind,
+      (d) => hasRecommendation(d) && isAccepted(d) && matchSource(d),
     );
   }
-  if (bucket.key === "trustKind") {
-    return decidedByUser.filter(
-      (d) =>
-        hasRecommendation(d) &&
-        actorKind(actors, d.recommended_by) === bucket.kind,
-    );
+  if (bucket.key === "trustSource") {
+    return decidedByUser.filter((d) => hasRecommendation(d) && matchSource(d));
   }
   return [];
 }
@@ -256,17 +290,31 @@ export function computeUserStats(
   const recommended = decisions.filter((d) => d.recommended_by === handle);
   const recDecided = recommended.filter((d) => d.status === "decided");
 
-  const deciderKindBuckets = {
-    human: { total: 0, accepted: 0 },
-    agent: { total: 0, accepted: 0 },
-    unknown: { total: 0, accepted: 0 },
+  const deciderBuckets = {
+    self: { total: 0, accepted: 0 },
+    otherAgent: { total: 0, accepted: 0 },
+    otherHuman: { total: 0, accepted: 0 },
+    unknownActor: { total: 0, accepted: 0 },
   };
   for (const d of recDecided) {
-    // Pick first decider as representative (decided_by is rarely multi)
     const decider = (d.decided_by ?? [])[0];
+    const acc = isAccepted(d);
+    if (decider === handle) {
+      deciderBuckets.self.total += 1;
+      if (acc) deciderBuckets.self.accepted += 1;
+      continue;
+    }
     const k = actorKind(actors, decider);
-    deciderKindBuckets[k].total += 1;
-    if (isAccepted(d)) deciderKindBuckets[k].accepted += 1;
+    if (k === "agent") {
+      deciderBuckets.otherAgent.total += 1;
+      if (acc) deciderBuckets.otherAgent.accepted += 1;
+    } else if (k === "human") {
+      deciderBuckets.otherHuman.total += 1;
+      if (acc) deciderBuckets.otherHuman.accepted += 1;
+    } else {
+      deciderBuckets.unknownActor.total += 1;
+      if (acc) deciderBuckets.unknownActor.accepted += 1;
+    }
   }
 
   const recommender: RecommenderFacet = {
@@ -277,9 +325,10 @@ export function computeUserStats(
       accepted: recDecided.filter(isAccepted).length,
     }),
     byKindOfDecider: {
-      human: withRate(deciderKindBuckets.human),
-      agent: withRate(deciderKindBuckets.agent),
-      unknown: withRate(deciderKindBuckets.unknown),
+      self: withRate(deciderBuckets.self),
+      otherAgent: withRate(deciderBuckets.otherAgent),
+      otherHuman: withRate(deciderBuckets.otherHuman),
+      unknownActor: withRate(deciderBuckets.unknownActor),
     },
   };
 
@@ -291,29 +340,39 @@ export function computeUserStats(
   let followedRec = 0,
     overrodeRec = 0,
     noRecExisted = 0;
-  let followedFromAgent = 0,
+  let followedFromSelf = 0,
+    followedFromOtherAgent = 0,
     followedFromHuman = 0,
     followedFromUnknown = 0;
 
   const trustBuckets = {
-    agent: { total: 0, accepted: 0 },
+    self: { total: 0, accepted: 0 },
+    otherAgent: { total: 0, accepted: 0 },
     human: { total: 0, accepted: 0 },
-    unknown: { total: 0, accepted: 0 },
   };
 
   for (const d of decidedByUser) {
-    const recExisted = hasRecommendation(d);
-    if (!recExisted) {
+    if (!hasRecommendation(d)) {
       noRecExisted += 1;
       continue;
     }
-    const recKind = actorKind(actors, d.recommended_by);
-    trustBuckets[recKind].total += 1;
+    const recBy = d.recommended_by;
+    let bucket: "self" | "otherAgent" | "human" | null;
+    if (recBy === handle) bucket = "self";
+    else {
+      const k = actorKind(actors, recBy);
+      bucket = k === "agent" ? "otherAgent" : k === "human" ? "human" : null;
+    }
+    if (bucket) {
+      trustBuckets[bucket].total += 1;
+      if (isAccepted(d)) trustBuckets[bucket].accepted += 1;
+    }
+
     if (isAccepted(d)) {
       followedRec += 1;
-      trustBuckets[recKind].accepted += 1;
-      if (recKind === "agent") followedFromAgent += 1;
-      else if (recKind === "human") followedFromHuman += 1;
+      if (bucket === "self") followedFromSelf += 1;
+      else if (bucket === "otherAgent") followedFromOtherAgent += 1;
+      else if (bucket === "human") followedFromHuman += 1;
       else followedFromUnknown += 1;
     } else {
       overrodeRec += 1;
@@ -329,10 +388,12 @@ export function computeUserStats(
       total: followedRec + overrodeRec,
       accepted: followedRec,
     }),
-    followedFromAgent,
+    followedFromSelf,
+    followedFromOtherAgent,
     followedFromHuman,
     followedFromUnknown,
-    agentTrust: withRate(trustBuckets.agent),
+    selfTrust: withRate(trustBuckets.self),
+    otherAgentTrust: withRate(trustBuckets.otherAgent),
     humanTrust: withRate(trustBuckets.human),
   };
 
