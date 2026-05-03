@@ -1,0 +1,5 @@
+packages:
+  - path: "github.com/cgould/dtree/internal/core"
+    output_path: "ui/src/api/types.gen.ts"
+    type_mappings:
+      time.Time: string

@@ -42,6 +42,18 @@ coverage:  ## Run tests with coverage and print per-package summary.
 	@go tool cover -func=coverage.out | tail -1
 	@echo "HTML report: go tool cover -html=coverage.out"
 
+.PHONY: ui
+ui:  ## Build the UI (produces internal/uifs/dist/).
+	cd ui && npm run build
+
+.PHONY: ui-dev
+ui-dev:  ## Start the UI dev server with HMR.
+	cd ui && npm run dev
+
+.PHONY: ui-types
+ui-types:  ## Regenerate TypeScript types from Go core types.
+	tygo generate
+
 .PHONY: clean
 clean:  ## Remove build artifacts.
 	rm -f dtree coverage.out

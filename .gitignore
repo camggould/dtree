@@ -8,6 +8,9 @@ PRD.md
 # UI build output (regenerated; embedded into binary at build)
 /internal/ui/dist/
 /ui/dist/
+# uifs dist: ignore built content but keep placeholder for go:embed
+/internal/uifs/dist/*
+!/internal/uifs/dist/.gitkeep
 
 # UI dependencies
 /ui/node_modules/

@@ -8,6 +8,7 @@ import (
 
 	"github.com/cgould/dtree/internal/identity"
 	"github.com/cgould/dtree/internal/index"
+	"github.com/cgould/dtree/internal/uifs"
 )
 
 // Trust is the identity-trust strategy for the server.
@@ -75,6 +76,16 @@ func New(cfg Config) *http.Server {
 		// Audit endpoints.
 		ah := newAuditHandlers(cfg.RepoRoot)
 		mountAuditRoutes(r, ah)
+	})
+
+	// Mount the compiled UI under /ui/ with SPA fallback.
+	uiHandler := uifs.Handler()
+	r.Handle("/ui/*", uiHandler)
+	r.Handle("/ui", uiHandler)
+
+	// Redirect root to the UI.
+	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/ui/", http.StatusFound)
 	})
 
 	// Catch-all for unknown routes: return Problem Details 404.

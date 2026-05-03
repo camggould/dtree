@@ -55,6 +55,7 @@ func NewRootCommand() *cobra.Command {
 	root.AddCommand(newShowCommand())
 	root.AddCommand(newTokenCommand())
 	root.AddCommand(newTreeCommand())
+	root.AddCommand(newUICommand())
 	root.AddCommand(newUndecideCommand())
 	root.AddCommand(newUnrelateCommand())
 	root.AddCommand(newVersionCommand())
