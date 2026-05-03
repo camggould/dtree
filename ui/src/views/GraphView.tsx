@@ -156,16 +156,21 @@ const NODE_H = 72;
 
 /** Top-down dagre layout. Sources (no incoming `blocks`) sit at the TOP
  *  of the canvas; dependencies cascade DOWN.
- *  Only `blocks` edges drive the rank assignment — soft edges
- *  (influences / relates_to / supersedes) still render but don't
- *  distort the structural shape of the tree.
+ *
+ *  Edge weights drive how strongly dagre tries to keep the endpoints
+ *  near each other:
+ *    - blocks      : weight 10 — dominant, defines the tree skeleton
+ *    - supersedes  : weight  6 — pulls a superseded pair adjacent so
+ *                                their edge doesn't span the canvas
+ *    - influences  : weight  2 — light pull
+ *    - relates_to  : skipped — pure annotation, no layout pressure
  */
 function applyDagreTB(nodes: Node[], edges: Edge[]): Node[] {
   const g = new dagre.graphlib.Graph();
   g.setGraph({
     rankdir: "TB",
-    nodesep: 80, // horizontal gap within a rank
-    ranksep: 110, // vertical gap between ranks
+    nodesep: 80,
+    ranksep: 110,
     edgesep: 30,
     marginx: 30,
     marginy: 30,
@@ -176,8 +181,20 @@ function applyDagreTB(nodes: Node[], edges: Edge[]): Node[] {
   for (const n of nodes) g.setNode(n.id, { width: NODE_W, height: NODE_H });
   for (const e of edges) {
     const data = e.data as { type?: string } | undefined;
-    if (data?.type && data.type !== "blocks") continue;
-    g.setEdge(e.source, e.target);
+    if (!data?.type) continue;
+    switch (data.type) {
+      case "blocks":
+        g.setEdge(e.source, e.target, { weight: 10 });
+        break;
+      case "supersedes":
+        // minlen 0 is invalid; 1 is the closest. weight gives the pull.
+        g.setEdge(e.source, e.target, { weight: 6, minlen: 1 });
+        break;
+      case "influences":
+        g.setEdge(e.source, e.target, { weight: 2, minlen: 1 });
+        break;
+      // relates_to intentionally skipped
+    }
   }
   dagre.layout(g);
   return nodes.map((n) => {
@@ -186,21 +203,16 @@ function applyDagreTB(nodes: Node[], edges: Edge[]): Node[] {
   });
 }
 
+type HandlePair = { sourceHandle: string; targetHandle: string };
+
 /** Pick the source/target handle pair for a TB layout.
  *
  *  - Forward (target below source, or directly below): exit BOTTOM, enter TOP.
- *    This is the common case and reads as a clean parent → child line.
- *  - Side (target on a different column at roughly the same row): exit/enter
- *    via the appropriate horizontal side.
- *  - Back-edge (target above source — i.e. the edge points UP): route via
- *    the SIDES so the line wraps around the chain instead of cutting back
- *    through nodes between them. The side is chosen by the horizontal
- *    direction so the loop opens toward the empty space.
+ *  - Side (target at roughly the same row): exit/enter via horizontal sides.
+ *  - Back-edge (target above source): route via sides so the line wraps
+ *    around the chain instead of cutting back through nodes between them.
  */
-function chooseHandlePair(
-  source: Node,
-  target: Node,
-): { sourceHandle: string; targetHandle: string } {
+function chooseHandlePair(source: Node, target: Node): HandlePair {
   const sx = source.position.x + NODE_W / 2;
   const sy = source.position.y + NODE_H / 2;
   const tx = target.position.x + NODE_W / 2;
@@ -208,26 +220,133 @@ function chooseHandlePair(
   const dx = tx - sx;
   const dy = ty - sy;
 
-  // Back-edge — target is above the source. Route around via sides so it
-  // doesn't cut through any node sitting between them on the same axis.
   if (dy < -NODE_H / 2) {
     if (Math.abs(dx) < NODE_W) {
-      // Same column or very close — loop out one side and back to the
-      // opposite side of the target. Default to the right.
       return { sourceHandle: "s-right", targetHandle: "t-right" };
     }
     return dx >= 0
       ? { sourceHandle: "s-right", targetHandle: "t-right" }
       : { sourceHandle: "s-left", targetHandle: "t-left" };
   }
-
-  // Forward / sideways — pick dominant axis.
   if (dy >= Math.abs(dx) * 0.6) {
     return { sourceHandle: "s-bottom", targetHandle: "t-top" };
   }
   return dx >= 0
     ? { sourceHandle: "s-right", targetHandle: "t-left" }
     : { sourceHandle: "s-left", targetHandle: "t-right" };
+}
+
+/** Hard rule: edges may not cross other nodes' bounding boxes.
+ *  After the primary handle choice, scan all OTHER node rectangles and
+ *  test if the straight segment from the chosen source handle to the
+ *  chosen target handle clips any of them. If so, swap to a side-routed
+ *  pair (left/left or right/right depending on dx) so the smoothstep
+ *  curves around the cluster instead of crashing through it.
+ */
+function routeAroundObstacles(
+  source: Node,
+  target: Node,
+  others: Node[],
+  initial: HandlePair,
+): HandlePair {
+  const segment = handleSegment(source, target, initial);
+  const conflict = others.some((n) =>
+    n.id !== source.id &&
+    n.id !== target.id &&
+    segmentIntersectsRect(segment, nodeRect(n)),
+  );
+  if (!conflict) return initial;
+  const sx = source.position.x + NODE_W / 2;
+  const tx = target.position.x + NODE_W / 2;
+  const dx = tx - sx;
+  // Loop around the side opposite the cluster — pick the side closer to
+  // canvas edge by dx sign.
+  return dx >= 0
+    ? { sourceHandle: "s-right", targetHandle: "t-right" }
+    : { sourceHandle: "s-left", targetHandle: "t-left" };
+}
+
+function nodeRect(n: Node) {
+  return {
+    x1: n.position.x,
+    y1: n.position.y,
+    x2: n.position.x + NODE_W,
+    y2: n.position.y + NODE_H,
+  };
+}
+
+/** Approximate the smoothstep edge as the straight segment between the
+ *  source and target handle anchor points. Good enough for clipping tests
+ *  on a tidy dagre layout. */
+function handleSegment(
+  source: Node,
+  target: Node,
+  pair: HandlePair,
+): { x1: number; y1: number; x2: number; y2: number } {
+  return {
+    x1: handlePoint(source, pair.sourceHandle).x,
+    y1: handlePoint(source, pair.sourceHandle).y,
+    x2: handlePoint(target, pair.targetHandle).x,
+    y2: handlePoint(target, pair.targetHandle).y,
+  };
+}
+
+function handlePoint(n: Node, handleId: string): { x: number; y: number } {
+  const cx = n.position.x + NODE_W / 2;
+  const cy = n.position.y + NODE_H / 2;
+  if (handleId.endsWith("top")) return { x: cx, y: n.position.y };
+  if (handleId.endsWith("bottom")) return { x: cx, y: n.position.y + NODE_H };
+  if (handleId.endsWith("left")) return { x: n.position.x, y: cy };
+  return { x: n.position.x + NODE_W, y: cy }; // right
+}
+
+/** Standard segment-vs-rect intersection. */
+function segmentIntersectsRect(
+  s: { x1: number; y1: number; x2: number; y2: number },
+  r: { x1: number; y1: number; x2: number; y2: number },
+): boolean {
+  // Quick reject: segment bbox vs rect.
+  const sxMin = Math.min(s.x1, s.x2);
+  const sxMax = Math.max(s.x1, s.x2);
+  const syMin = Math.min(s.y1, s.y2);
+  const syMax = Math.max(s.y1, s.y2);
+  if (sxMax < r.x1 || sxMin > r.x2 || syMax < r.y1 || syMin > r.y2) {
+    return false;
+  }
+  // Endpoint inside the rect?
+  if (
+    pointInRect(s.x1, s.y1, r) ||
+    pointInRect(s.x2, s.y2, r)
+  ) {
+    return true;
+  }
+  // Segment vs each of the four edges.
+  return (
+    segIntersect(s.x1, s.y1, s.x2, s.y2, r.x1, r.y1, r.x2, r.y1) ||
+    segIntersect(s.x1, s.y1, s.x2, s.y2, r.x2, r.y1, r.x2, r.y2) ||
+    segIntersect(s.x1, s.y1, s.x2, s.y2, r.x2, r.y2, r.x1, r.y2) ||
+    segIntersect(s.x1, s.y1, s.x2, s.y2, r.x1, r.y2, r.x1, r.y1)
+  );
+}
+
+function pointInRect(
+  x: number,
+  y: number,
+  r: { x1: number; y1: number; x2: number; y2: number },
+): boolean {
+  return x >= r.x1 && x <= r.x2 && y >= r.y1 && y <= r.y2;
+}
+
+/** Two-segment intersection (proper, no collinear edge cases needed). */
+function segIntersect(
+  ax: number, ay: number, bx: number, by: number,
+  cx: number, cy: number, dx: number, dy: number,
+): boolean {
+  const d = (bx - ax) * (dy - cy) - (by - ay) * (dx - cx);
+  if (d === 0) return false;
+  const t = ((cx - ax) * (dy - cy) - (cy - ay) * (dx - cx)) / d;
+  const u = ((cx - ax) * (by - ay) - (cy - ay) * (bx - ax)) / d;
+  return t >= 0 && t <= 1 && u >= 0 && u <= 1;
 }
 
 // ---- Build raw nodes/edges ------------------------------------------------
@@ -357,7 +476,9 @@ export default function GraphView() {
       const s = byId.get(e.source);
       const t = byId.get(e.target);
       if (!s || !t) return e;
-      return { ...e, ...chooseHandlePair(s, t) };
+      const initial = chooseHandlePair(s, t);
+      const safe = routeAroundObstacles(s, t, placed, initial);
+      return { ...e, ...safe };
     });
     return { nodes: placed, edges: positionedEdges };
   }, [decisions]);
