@@ -6,18 +6,35 @@ import { keys } from "@/api/query";
 type AddToast = (opts: { title: string; description?: string; color?: string }) => void;
 
 /** Invalidate every query that could change as a result of mutating one
- *  decision. Includes the decision itself, the tree's decision list, the
- *  tree's metrics, the per-decision history, and the audit log. Cheap.
+ *  decision: the decision itself, all per-tree decision-list variants
+ *  (filtered, paginated, anything starting with the same prefix), the
+ *  per-decision history, the tree's metrics, and the audit log.
  */
 function invalidateAllForDecision(
   qc: QueryClient,
   tree: string,
   id: string,
 ): void {
-  invalidateAllForDecision(qc, tree, id);
+  qc.invalidateQueries({ queryKey: keys.decision(tree, id) });
   qc.invalidateQueries({ queryKey: keys.history(tree, id) });
+  qc.invalidateQueries({ queryKey: ["trees", tree, "decisions"] });
   qc.invalidateQueries({ queryKey: keys.metrics(tree) });
-  qc.invalidateQueries({ queryKey: ["audit"] }); // partial match — all audit
+  qc.invalidateQueries({ queryKey: ["audit"] });
+}
+
+/** Push the server's response straight into the cache so any active
+ *  observer renders the new state on its very next render — no waiting
+ *  for the refetch round-trip. Also bumps the `_rev` that subsequent
+ *  If-Match calls will use, killing the stale-rev → 412 race when a
+ *  user clicks twice in quick succession.
+ */
+function primeDecisionCache(
+  qc: QueryClient,
+  tree: string,
+  id: string,
+  fresh: Decision,
+): void {
+  qc.setQueryData(keys.decision(tree, id), fresh);
 }
 
 function handle412(err: unknown, refetch: () => void, addToast?: AddToast) {
@@ -54,7 +71,8 @@ export function useDecide(tree: string, id: string, addToast?: AddToast) {
         headers: ifMatch ? { "If-Match": ifMatch } : {},
       });
     },
-    onSuccess: () => {
+    onSuccess: ({ data }) => {
+      primeDecisionCache(qc, tree, id, data);
       invalidateAllForDecision(qc, tree, id);
     },
     onError: (err) => {
@@ -72,7 +90,8 @@ export function useUndecide(tree: string, id: string, addToast?: AddToast) {
         body: JSON.stringify({}),
         headers: ifMatch ? { "If-Match": ifMatch } : {},
       }),
-    onSuccess: () => {
+    onSuccess: ({ data }) => {
+      primeDecisionCache(qc, tree, id, data);
       invalidateAllForDecision(qc, tree, id);
     },
     onError: (err) => {
@@ -92,7 +111,8 @@ export function useScopeOut(tree: string, id: string, addToast?: AddToast) {
         headers: ifMatch ? { "If-Match": ifMatch } : {},
       });
     },
-    onSuccess: () => {
+    onSuccess: ({ data }) => {
+      primeDecisionCache(qc, tree, id, data);
       invalidateAllForDecision(qc, tree, id);
     },
     onError: (err) => {
@@ -112,7 +132,8 @@ export function useSupersede(tree: string, id: string, addToast?: AddToast) {
         headers: ifMatch ? { "If-Match": ifMatch } : {},
       });
     },
-    onSuccess: () => {
+    onSuccess: ({ data }) => {
+      primeDecisionCache(qc, tree, id, data);
       invalidateAllForDecision(qc, tree, id);
     },
     onError: (err) => {
@@ -130,7 +151,8 @@ export function useRestore(tree: string, id: string, addToast?: AddToast) {
         body: JSON.stringify({}),
         headers: ifMatch ? { "If-Match": ifMatch } : {},
       }),
-    onSuccess: () => {
+    onSuccess: ({ data }) => {
+      primeDecisionCache(qc, tree, id, data);
       invalidateAllForDecision(qc, tree, id);
     },
     onError: (err) => {
@@ -151,6 +173,8 @@ export function useRelate(tree: string, id: string, addToast?: AddToast) {
       });
     },
     onSuccess: () => {
+      // Server returns the new Relationship (not the parent decision); just
+      // invalidate so the decision refetches with updated relationships.
       invalidateAllForDecision(qc, tree, id);
     },
     onError: (err) => {
@@ -190,7 +214,8 @@ export function useUpdateDecision(tree: string, id: string, addToast?: AddToast)
         headers: ifMatch ? { "If-Match": ifMatch } : {},
       });
     },
-    onSuccess: () => {
+    onSuccess: ({ data }) => {
+      primeDecisionCache(qc, tree, id, data);
       invalidateAllForDecision(qc, tree, id);
     },
     onError: (err) => {
