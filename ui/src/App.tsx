@@ -5,6 +5,7 @@ import { queryClient } from "@/api/query";
 import { useAppStore } from "@/store/app";
 import { Layout } from "@/components/Layout";
 import { useAuditStream } from "@/api/sse";
+import GraphView from "@/views/GraphView";
 import "@/styles/globals.css";
 
 // Stub views
@@ -12,7 +13,7 @@ function HomeView() {
   return <div>Not implemented: HomeView</div>;
 }
 function TreeView() {
-  return <div>Not implemented: TreeView</div>;
+  return <GraphView />;
 }
 function DecisionView() {
   return <div>Not implemented: DecisionView</div>;

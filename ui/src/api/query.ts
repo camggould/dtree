@@ -10,7 +10,12 @@ import type {
   Decision,
   PaginatedResponse,
   Metrics,
+  Event,
 } from "@/api/types.gen";
+
+export interface HistoryResponse {
+  events: Event[];
+}
 
 export const queryClient = new QueryClient({
   defaultOptions: {
@@ -33,6 +38,7 @@ export const keys = {
   audit: (tree?: string) => ["audit", tree ?? "all"] as const,
   actors: () => ["actors"] as const,
   health: () => ["health"] as const,
+  history: (tree: string, id: string) => ["history", tree, id] as const,
 };
 
 // ---- Hooks ----
@@ -88,5 +94,21 @@ export function useMetrics(tree: string): UseQueryResult<Metrics> {
       return data;
     },
     enabled: Boolean(tree),
+  });
+}
+
+export function useHistory(
+  tree: string,
+  id: string,
+): UseQueryResult<HistoryResponse> {
+  return useQuery({
+    queryKey: keys.history(tree, id),
+    queryFn: async () => {
+      const { data } = await apiFetch<HistoryResponse>(
+        `/v1/trees/${tree}/decisions/${id}/history`,
+      );
+      return data;
+    },
+    enabled: !!tree && !!id,
   });
 }
