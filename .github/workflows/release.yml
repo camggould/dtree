@@ -118,7 +118,7 @@ jobs:
             --title "$version" \
             --notes "Pre-built binaries for linux/darwin × amd64/arm64. Install via:
           \`\`\`sh
-          curl -fsSL https://raw.githubusercontent.com/cgould/dtree/main/install.sh | sh
+          curl -fsSL https://raw.githubusercontent.com/camggould/dtree/main/install.sh | sh
           \`\`\`
           Verify with SHA256SUMS." \
             --draft=false
