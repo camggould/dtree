@@ -1,9 +1,10 @@
 import { HeroUIProvider } from "@heroui/react";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { Route, Switch } from "wouter";
+import { Route, Router, Switch } from "wouter";
 import { queryClient } from "@/api/query";
 import { useAppStore } from "@/store/app";
 import { Layout } from "@/components/Layout";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { useAuditStream } from "@/api/sse";
 import GraphView from "@/views/GraphView";
 import { DecisionView } from "@/views/DecisionView";
@@ -11,6 +12,9 @@ import { AuditView } from "@/views/AuditView";
 import { QueueView } from "@/views/QueueView";
 import { KanbanView } from "@/views/KanbanView";
 import { Dashboard } from "@/views/Dashboard";
+import { UserDrillDown } from "@/views/UserDrillDown";
+import { ActorsView } from "@/views/ActorsView";
+import { SettingsView } from "@/views/SettingsView";
 import "@/styles/globals.css";
 
 // Stub views
@@ -19,12 +23,6 @@ function HomeView() {
 }
 function TreeView() {
   return <GraphView />;
-}
-function ActorsView() {
-  return <div>Not implemented: ActorsView</div>;
-}
-function SettingsView() {
-  return <div>Not implemented: SettingsView</div>;
 }
 function NotFoundView() {
   return <div>Not implemented: NotFoundView</div>;
@@ -36,6 +34,7 @@ function AppRoutes() {
 
   return (
     <Layout>
+      <ErrorBoundary>
       <Switch>
         <Route path="/" component={HomeView} />
         <Route path="/trees/:tree" component={TreeView} />
@@ -44,10 +43,12 @@ function AppRoutes() {
         <Route path="/trees/:tree/audit" component={AuditView} />
         <Route path="/trees/:tree/kanban" component={KanbanView} />
         <Route path="/dashboard" component={Dashboard} />
+        <Route path="/users/:handle" component={UserDrillDown} />
         <Route path="/actors" component={ActorsView} />
         <Route path="/settings" component={SettingsView} />
         <Route component={NotFoundView} />
       </Switch>
+      </ErrorBoundary>
     </Layout>
   );
 }
@@ -62,7 +63,10 @@ function ThemeWrapper({ children }: { children: React.ReactNode }) {
       : theme;
 
   return (
-    <div data-theme={resolved} className={resolved}>
+    <div
+      data-theme={resolved}
+      className={`${resolved} text-foreground bg-background min-h-screen`}
+    >
       {children}
     </div>
   );
@@ -73,7 +77,9 @@ export default function App() {
     <QueryClientProvider client={queryClient}>
       <HeroUIProvider>
         <ThemeWrapper>
-          <AppRoutes />
+          <Router base="/ui">
+            <AppRoutes />
+          </Router>
         </ThemeWrapper>
       </HeroUIProvider>
     </QueryClientProvider>

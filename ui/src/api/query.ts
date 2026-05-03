@@ -16,6 +16,7 @@ import type {
   QueueItem,
   Status,
   Priority,
+  Actor,
 } from "@/api/types.gen";
 import { subDays, format, parseISO } from "date-fns";
 
@@ -200,6 +201,46 @@ export interface AggregateMetrics {
   isError: boolean;
 }
 
+// ---------------------------------------------------------------------------
+// Cross-tree analytics primitives
+// ---------------------------------------------------------------------------
+
+/** All actors. Returns [] until loaded. */
+export function useActors(): UseQueryResult<Actor[]> {
+  return useQuery({
+    queryKey: keys.actors(),
+    queryFn: async () => {
+      const { data } = await apiFetch<{ items: Actor[] }>("/v1/actors");
+      return data.items;
+    },
+  });
+}
+
+/** All decisions across the given tree slugs. Empty slugs[] = no fetches. */
+export function useAllDecisions(treeSlugs: string[]): {
+  decisions: Decision[];
+  isLoading: boolean;
+  isError: boolean;
+} {
+  const results = useQueries({
+    queries: treeSlugs.map((slug) => ({
+      queryKey: keys.decisions(slug, { _scope: "all" }),
+      queryFn: async () => {
+        const { data } = await apiFetch<PaginatedResponse<Decision>>(
+          `/v1/trees/${slug}/decisions?limit=1000`,
+        );
+        return data.items.map((d) => ({ ...d, tree: slug }));
+      },
+      enabled: Boolean(slug),
+    })),
+  });
+  return {
+    decisions: results.flatMap((r) => r.data ?? []),
+    isLoading: results.some((r) => r.isLoading),
+    isError: results.some((r) => r.isError),
+  };
+}
+
 export function useAggregateMetrics(): AggregateMetrics {
   const treesQuery = useTrees();
   const treeSlugs = treesQuery.data?.map((t) => t.slug) ?? [];
@@ -253,10 +294,17 @@ export function useAggregateMetrics(): AggregateMetrics {
     {} as Record<Priority, number>,
   );
 
-  // Merge by_creator: group by handle, sum counts
+  // Merge by_creator: server returns {handle: count}; sum across trees, then
+  // emit a sorted array for the dashboard to render.
   const creatorMap = new Map<string, number>();
   for (const m of allMetrics) {
-    for (const { handle, count } of m.by_creator) {
+    const entries: Array<[string, number]> = Array.isArray(m.by_creator)
+      ? (m.by_creator as Array<{ handle: string; count: number }>).map((e) => [
+          e.handle,
+          e.count,
+        ])
+      : Object.entries(m.by_creator as unknown as Record<string, number>);
+    for (const [handle, count] of entries) {
       creatorMap.set(handle, (creatorMap.get(handle) ?? 0) + count);
     }
   }
@@ -296,22 +344,30 @@ export interface DailyCount {
 }
 
 export function useActivityCounts(days = 30): UseQueryResult<DailyCount[]> {
-  const since = subDays(new Date(), days).toISOString();
+  // Stable bucket: midnight UTC `days` days ago. Without this, `new Date()`
+  // would re-run on every render and the queryKey would change every paint,
+  // causing perpetual loading.
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  const since = subDays(today, days).toISOString();
+
   return useQuery({
     queryKey: keys.auditSince(since),
     queryFn: async () => {
       const params = new URLSearchParams({ since, limit: "1000" });
-      const { data } = await apiFetch<AuditResponse>(
+      const { data } = await apiFetch<AuditResponse & { events?: Event[] }>(
         `/v1/audit?${params.toString()}`,
       );
-      // Group events by day
+      // Server returns {events: [...]} on this endpoint; keep `items` fallback
+      // in case a future change normalises the shape.
+      const events = data.events ?? data.items ?? [];
+
       const countMap = new Map<string, number>();
-      // Pre-fill all days with 0
       for (let i = days - 1; i >= 0; i--) {
-        const day = format(subDays(new Date(), i), "yyyy-MM-dd");
+        const day = format(subDays(today, i), "yyyy-MM-dd");
         countMap.set(day, 0);
       }
-      for (const event of data.items) {
+      for (const event of events) {
         const day = format(parseISO(event.ts), "yyyy-MM-dd");
         if (countMap.has(day)) {
           countMap.set(day, (countMap.get(day) ?? 0) + 1);

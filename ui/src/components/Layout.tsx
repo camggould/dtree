@@ -106,7 +106,7 @@ export function Layout({ children }: LayoutProps) {
                   ? trees.map((t) => (
                       <DropdownItem key={t.slug}>
                         <Link href={ROUTES.tree(t.slug)}>
-                          {t.name ?? t.slug}
+                          {t.title ?? t.name ?? t.slug}
                         </Link>
                       </DropdownItem>
                     ))

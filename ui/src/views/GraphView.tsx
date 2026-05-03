@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import ReactFlow, {
+import {
+  ReactFlow,
   Background,
   Controls,
   MiniMap,
@@ -11,13 +12,13 @@ import ReactFlow, {
   type Edge,
   type NodeProps,
   type Connection,
-} from "reactflow";
+} from "@xyflow/react";
 import dagre from "@dagrejs/dagre";
 import { Button, ButtonGroup, Chip } from "@heroui/react";
 import { useLocation, useParams } from "wouter";
 import { useDecisions } from "@/api/query";
 import type { Decision, RelationshipType, Status } from "@/api/types.gen";
-import "reactflow/dist/style.css";
+import "@xyflow/react/dist/style.css";
 
 // ---- Status colors ----
 const STATUS_COLORS: Record<Status, string> = {
@@ -169,8 +170,8 @@ export default function GraphView() {
   const [, setLocation] = useLocation();
 
   const [direction, setDirection] = useState<Direction | "free">("TB");
-  const [nodes, setNodes, onNodesChange] = useNodesState([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
 
   const { data: decisionsPage } = useDecisions(tree);
   const decisions = decisionsPage?.items ?? [];

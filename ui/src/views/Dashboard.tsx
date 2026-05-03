@@ -1,4 +1,25 @@
-import { Card, CardBody, CardHeader, Spinner } from "@heroui/react";
+import { useMemo, useState } from "react";
+import { Link } from "wouter";
+import {
+  Card,
+  CardBody,
+  CardHeader,
+  Spinner,
+  Chip,
+  Button,
+  Dropdown,
+  DropdownTrigger,
+  DropdownMenu,
+  DropdownItem,
+  Table,
+  TableHeader,
+  TableColumn,
+  TableBody,
+  TableRow,
+  TableCell,
+  Progress,
+} from "@heroui/react";
+import { ChevronDown, Users } from "lucide-react";
 import {
   PieChart,
   Pie,
@@ -14,85 +35,205 @@ import {
   Line,
   ResponsiveContainer,
 } from "recharts";
-import { useQueries } from "@tanstack/react-query";
 import {
-  useAggregateMetrics,
-  useActivityCounts,
   useTrees,
+  useActivityCounts,
+  useActors,
+  useAllDecisions,
 } from "@/api/query";
-import { apiFetch } from "@/api/client";
-import type { PaginatedResponse, Decision } from "@/api/types.gen";
+import {
+  computeAgentHumanBreakdown,
+  computeUserStats,
+  isAccepted,
+  type RateStat,
+} from "@/analytics/insights";
 
-// ---- Color maps ----
 const STATUS_COLORS: Record<string, string> = {
-  proposed: "#3b82f6",   // blue
-  decided: "#22c55e",    // green
-  out_of_scope: "#6b7280", // gray
-  superseded: "#f97316", // orange
+  proposed: "#3b82f6",
+  decided: "#22c55e",
+  out_of_scope: "#6b7280",
+  superseded: "#f97316",
+};
+const PRIORITY_ORDER = ["assumption", "low", "medium", "high", "critical"] as const;
+const PRIORITY_COLORS: Record<string, string> = {
+  assumption: "#a78bfa",
+  low: "#94a3b8",
+  medium: "#3b82f6",
+  high: "#f59e0b",
+  critical: "#ef4444",
 };
 
-const PRIORITY_ORDER = [
-  "assumption",
-  "low",
-  "medium",
-  "high",
-  "critical",
-] as const;
-
-// ---- Recommendation acceptance ----
-
-function useAcceptanceRate(): {
-  rate: number | null;
-  numerator: number;
-  denominator: number;
-  isLoading: boolean;
-} {
-  const treesQuery = useTrees();
-  const treeSlugs = treesQuery.data?.map((t) => t.slug) ?? [];
-
-  // Fetch all decided decisions per tree in parallel
-  const decidedResults = useQueries({
-    queries: treeSlugs.map((slug) => ({
-      queryKey: ["trees", slug, "decisions", { status: "decided" }],
-      queryFn: async () => {
-        const { data } = await apiFetch<PaginatedResponse<Decision>>(
-          `/v1/trees/${slug}/decisions?status=decided&limit=1000`,
-        );
-        return data.items;
-      },
-      enabled: Boolean(slug),
-    })),
-  });
-
-  const isLoading =
-    treesQuery.isLoading || decidedResults.some((r) => r.isLoading);
-
-  const allDecided = decidedResults
-    .flatMap((r) => r.data ?? []);
-
-  const denominator = allDecided.length;
-  const numerator = allDecided.filter(
-    (d) =>
-      d.is_recommended === true ||
-      (d.actual_choice != null &&
-        d.recommended_summary != null &&
-        d.actual_choice === d.recommended_summary),
-  ).length;
-
-  const rate = denominator > 0 ? (numerator / denominator) * 100 : null;
-
-  return { rate, numerator, denominator, isLoading };
+function pct(rate: number | null): string {
+  return rate === null ? "—" : `${rate.toFixed(1)}%`;
 }
 
-// ---- Sub-components ----
+// ---------------------------------------------------------------------------
+// Tree filter
+// ---------------------------------------------------------------------------
 
-function HeadlineMetric() {
-  const { rate, numerator, denominator, isLoading } = useAcceptanceRate();
+function TreeFilter({
+  allSlugs,
+  selected,
+  setSelected,
+}: {
+  allSlugs: string[];
+  selected: Set<string>;
+  setSelected: (s: Set<string>) => void;
+}) {
+  const label =
+    selected.size === 0 || selected.size === allSlugs.length
+      ? "All trees"
+      : `${selected.size} tree${selected.size === 1 ? "" : "s"}`;
 
   return (
-    <Card className="col-span-2">
+    <Dropdown closeOnSelect={false}>
+      <DropdownTrigger>
+        <Button
+          variant="flat"
+          endContent={<ChevronDown size={14} />}
+          size="sm"
+        >
+          Trees: {label}
+        </Button>
+      </DropdownTrigger>
+      <DropdownMenu
+        aria-label="Tree filter"
+        selectionMode="multiple"
+        selectedKeys={selected}
+        onSelectionChange={(keys) => {
+          if (keys === "all") setSelected(new Set(allSlugs));
+          else setSelected(new Set(Array.from(keys, String)));
+        }}
+      >
+        {allSlugs.map((slug) => (
+          <DropdownItem key={slug}>{slug}</DropdownItem>
+        ))}
+      </DropdownMenu>
+    </Dropdown>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Cards
+// ---------------------------------------------------------------------------
+
+function AcceptanceRow({
+  label,
+  stat,
+  color,
+}: {
+  label: string;
+  stat: RateStat;
+  color: "success" | "primary" | "secondary" | "default";
+}) {
+  return (
+    <div className="flex items-center gap-3">
+      <div className="min-w-24 text-sm font-medium">{label}</div>
+      <Progress
+        aria-label={label}
+        value={stat.rate ?? 0}
+        color={color}
+        size="md"
+        className="flex-1"
+      />
+      <div className="min-w-32 text-sm text-right tabular-nums">
+        <span className="font-semibold">{pct(stat.rate)}</span>
+        <span className="text-default-400 ml-2">
+          ({stat.accepted}/{stat.total})
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function AgentVsHumanCard({
+  decisions,
+  actors,
+  isLoading,
+}: {
+  decisions: ReturnType<typeof useAllDecisions>["decisions"];
+  actors: ReturnType<typeof useActors>["data"];
+  isLoading: boolean;
+}) {
+  const breakdown = useMemo(
+    () => computeAgentHumanBreakdown(decisions, actors ?? []),
+    [decisions, actors],
+  );
+
+  return (
+    <Card className="md:col-span-2">
       <CardHeader>
-        <h2 className="text-lg font-semibold">Recommendation Acceptance</h2>
+        <div>
+          <h2 className="text-lg font-semibold">Delegation & acceptance</h2>
+          <p className="text-sm text-default-500">
+            How often decisions follow a recommendation, broken down by who
+            recommended
+          </p>
+        </div>
+      </CardHeader>
+      <CardBody className="gap-4">
+        {isLoading ? (
+          <Spinner />
+        ) : (
+          <>
+            <div className="flex gap-6 text-center justify-around pb-3 border-b border-default-200">
+              <div>
+                <div className="text-2xl font-bold">{breakdown.totalDecided}</div>
+                <div className="text-xs text-default-500">Decided</div>
+              </div>
+              <div>
+                <div className="text-2xl font-bold">
+                  {breakdown.withRecommendation}
+                </div>
+                <div className="text-xs text-default-500">With recommendation</div>
+              </div>
+              <div>
+                <div className="text-2xl font-bold text-primary">
+                  {pct(breakdown.delegationRate)}
+                </div>
+                <div className="text-xs text-default-500">Delegation rate</div>
+              </div>
+            </div>
+
+            <AcceptanceRow
+              label="Agent rec."
+              stat={breakdown.agent}
+              color="secondary"
+            />
+            <AcceptanceRow
+              label="Human rec."
+              stat={breakdown.human}
+              color="primary"
+            />
+            {breakdown.unknown.total > 0 && (
+              <AcceptanceRow
+                label="Unknown"
+                stat={breakdown.unknown}
+                color="default"
+              />
+            )}
+          </>
+        )}
+      </CardBody>
+    </Card>
+  );
+}
+
+function HeadlineMetric({
+  decisions,
+  isLoading,
+}: {
+  decisions: ReturnType<typeof useAllDecisions>["decisions"];
+  isLoading: boolean;
+}) {
+  const decided = decisions.filter((d) => d.status === "decided");
+  const accepted = decided.filter(isAccepted);
+  const rate = decided.length === 0 ? null : (accepted.length / decided.length) * 100;
+
+  return (
+    <Card className="md:col-span-2">
+      <CardHeader>
+        <h2 className="text-lg font-semibold">Recommendation acceptance</h2>
       </CardHeader>
       <CardBody className="flex flex-col items-center justify-center py-6">
         {isLoading ? (
@@ -105,8 +246,8 @@ function HeadlineMetric() {
               {rate.toFixed(1)}%
             </span>
             <p className="mt-2 text-sm text-default-500 text-center">
-              {numerator} of {denominator} decided decisions accepted the
-              recommendation
+              {accepted.length} of {decided.length} decided decisions accepted
+              the recommendation
             </p>
           </>
         )}
@@ -115,41 +256,39 @@ function HeadlineMetric() {
   );
 }
 
-function SummaryTiles() {
-  const aggregate = useAggregateMetrics();
-
+function SummaryTiles({
+  decisions,
+  treeCount,
+  isLoading,
+}: {
+  decisions: ReturnType<typeof useAllDecisions>["decisions"];
+  treeCount: number;
+  isLoading: boolean;
+}) {
+  const byStatus = decisions.reduce(
+    (acc, d) => {
+      acc[d.status] = (acc[d.status] ?? 0) + 1;
+      return acc;
+    },
+    {} as Record<string, number>,
+  );
   const tiles = [
-    {
-      label: "Total Decisions",
-      value: aggregate.total_decisions,
-    },
-    {
-      label: "Total Trees",
-      value: aggregate.total_trees,
-    },
-    {
-      label: "Proposed",
-      value: aggregate.by_status["proposed"] ?? 0,
-    },
-    {
-      label: "Decided",
-      value: aggregate.by_status["decided"] ?? 0,
-    },
+    { label: "Total decisions", value: decisions.length },
+    { label: "Trees in scope", value: treeCount },
+    { label: "Proposed", value: byStatus["proposed"] ?? 0 },
+    { label: "Decided", value: byStatus["decided"] ?? 0 },
   ];
-
   return (
     <>
-      {tiles.map((tile) => (
-        <Card key={tile.label}>
+      {tiles.map((t) => (
+        <Card key={t.label}>
           <CardBody className="flex flex-col items-center justify-center py-4">
-            {aggregate.isLoading ? (
+            {isLoading ? (
               <Spinner size="sm" />
             ) : (
               <>
-                <span className="text-3xl font-bold">{tile.value}</span>
-                <span className="text-sm text-default-500 mt-1">
-                  {tile.label}
-                </span>
+                <span className="text-3xl font-bold">{t.value}</span>
+                <span className="text-sm text-default-500 mt-1">{t.label}</span>
               </>
             )}
           </CardBody>
@@ -159,28 +298,35 @@ function SummaryTiles() {
   );
 }
 
-function StatusPie() {
-  const aggregate = useAggregateMetrics();
-
-  const data = Object.entries(aggregate.by_status).map(([key, value]) => ({
-    name: key,
-    value,
-  }));
+function StatusPie({
+  decisions,
+  isLoading,
+}: {
+  decisions: ReturnType<typeof useAllDecisions>["decisions"];
+  isLoading: boolean;
+}) {
+  const data = Object.entries(
+    decisions.reduce(
+      (acc, d) => {
+        acc[d.status] = (acc[d.status] ?? 0) + 1;
+        return acc;
+      },
+      {} as Record<string, number>,
+    ),
+  ).map(([name, value]) => ({ name, value }));
 
   return (
     <Card>
       <CardHeader>
-        <h3 className="text-base font-semibold">Status Breakdown</h3>
+        <h3 className="text-base font-semibold">Status breakdown</h3>
       </CardHeader>
       <CardBody>
-        {aggregate.isLoading ? (
+        {isLoading ? (
           <div className="flex justify-center py-8">
             <Spinner />
           </div>
         ) : data.length === 0 ? (
-          <p className="text-default-400 text-sm text-center py-8">
-            No data yet
-          </p>
+          <p className="text-default-400 text-sm text-center py-8">No data</p>
         ) : (
           <ResponsiveContainer width="100%" height={260}>
             <PieChart>
@@ -193,7 +339,6 @@ function StatusPie() {
                 label={({ name, percent }) =>
                   `${String(name ?? "")} ${(((percent as number | undefined) ?? 0) * 100).toFixed(0)}%`
                 }
-                labelLine={false}
               >
                 {data.map((entry) => (
                   <Cell
@@ -203,7 +348,6 @@ function StatusPie() {
                 ))}
               </Pie>
               <Tooltip />
-              <Legend />
             </PieChart>
           </ResponsiveContainer>
         )}
@@ -212,32 +356,47 @@ function StatusPie() {
   );
 }
 
-function PriorityBar() {
-  const aggregate = useAggregateMetrics();
-
-  const data = PRIORITY_ORDER.map((p) => ({
-    name: p,
-    count: aggregate.by_priority[p] ?? 0,
-  }));
+function PriorityBar({
+  decisions,
+  isLoading,
+}: {
+  decisions: ReturnType<typeof useAllDecisions>["decisions"];
+  isLoading: boolean;
+}) {
+  const counts = decisions.reduce(
+    (acc, d) => {
+      acc[d.priority] = (acc[d.priority] ?? 0) + 1;
+      return acc;
+    },
+    {} as Record<string, number>,
+  );
+  const data = PRIORITY_ORDER.map((p) => ({ name: p, value: counts[p] ?? 0 }));
 
   return (
     <Card>
       <CardHeader>
-        <h3 className="text-base font-semibold">Priority Breakdown</h3>
+        <h3 className="text-base font-semibold">Priority breakdown</h3>
       </CardHeader>
       <CardBody>
-        {aggregate.isLoading ? (
+        {isLoading ? (
           <div className="flex justify-center py-8">
             <Spinner />
           </div>
         ) : (
           <ResponsiveContainer width="100%" height={260}>
-            <BarChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
+            <BarChart data={data}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="name" tick={{ fontSize: 12 }} />
               <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
               <Tooltip />
-              <Bar dataKey="count" fill="#6366f1" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="value">
+                {data.map((entry) => (
+                  <Cell
+                    key={entry.name}
+                    fill={PRIORITY_COLORS[entry.name] ?? "#94a3b8"}
+                  />
+                ))}
+              </Bar>
             </BarChart>
           </ResponsiveContainer>
         )}
@@ -250,15 +409,17 @@ function ActivityLine() {
   const activityQuery = useActivityCounts(30);
 
   return (
-    <Card className="col-span-2">
+    <Card className="md:col-span-2">
       <CardHeader>
-        <h3 className="text-base font-semibold">Activity (Last 30 Days)</h3>
+        <h3 className="text-base font-semibold">Activity (last 30 days)</h3>
       </CardHeader>
       <CardBody>
         {activityQuery.isLoading ? (
           <div className="flex justify-center py-8">
             <Spinner />
           </div>
+        ) : activityQuery.isError ? (
+          <p className="text-danger text-sm">Failed to load audit data</p>
         ) : (
           <ResponsiveContainer width="100%" height={220}>
             <LineChart
@@ -269,14 +430,16 @@ function ActivityLine() {
               <XAxis
                 dataKey="date"
                 tick={{ fontSize: 11 }}
-                tickFormatter={(v: string) => v.slice(5)} // MM-DD
+                tickFormatter={(v: string) => v.slice(5)}
                 interval="preserveStartEnd"
               />
               <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
               <Tooltip />
+              <Legend />
               <Line
                 type="monotone"
                 dataKey="count"
+                name="events"
                 stroke="#3b82f6"
                 dot={false}
                 strokeWidth={2}
@@ -289,83 +452,161 @@ function ActivityLine() {
   );
 }
 
-function TopContributors() {
-  const aggregate = useAggregateMetrics();
-  const top10 = aggregate.by_creator.slice(0, 10);
+function ContributorsTable({
+  decisions,
+  actors,
+  isLoading,
+}: {
+  decisions: ReturnType<typeof useAllDecisions>["decisions"];
+  actors: ReturnType<typeof useActors>["data"];
+  isLoading: boolean;
+}) {
+  const rows = useMemo(() => {
+    if (!actors || actors.length === 0) return [];
+    return actors
+      .map((a) => {
+        const s = computeUserStats(a.handle, decisions, actors);
+        return {
+          handle: a.handle,
+          kind: a.kind,
+          name: a.name,
+          created: s.creator.totalCreated,
+          recommended: s.recommender.totalRecommended,
+          decided: s.decider.totalDecided,
+          followedRec: s.decider.followedRec,
+          rate: s.decider.acceptanceWhenRecExisted.rate,
+        };
+      })
+      .filter(
+        (r) => r.created > 0 || r.recommended > 0 || r.decided > 0,
+      )
+      .sort(
+        (a, b) =>
+          b.created + b.recommended + b.decided -
+          (a.created + a.recommended + a.decided),
+      );
+  }, [decisions, actors]);
 
   return (
-    <Card>
-      <CardHeader>
-        <h3 className="text-base font-semibold">Top Contributors</h3>
+    <Card className="md:col-span-2">
+      <CardHeader className="flex items-center gap-2">
+        <Users size={18} />
+        <h3 className="text-base font-semibold">Contributors</h3>
+        <span className="text-default-400 text-sm">— click a row to drill in</span>
       </CardHeader>
       <CardBody>
-        {aggregate.isLoading ? (
-          <div className="flex justify-center py-8">
-            <Spinner />
-          </div>
-        ) : top10.length === 0 ? (
+        {isLoading ? (
+          <Spinner />
+        ) : rows.length === 0 ? (
           <p className="text-default-400 text-sm text-center py-8">
-            No contributors yet
+            No activity yet
           </p>
         ) : (
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-default-200">
-                <th className="text-left py-2 font-medium text-default-600">
-                  Handle
-                </th>
-                <th className="text-right py-2 font-medium text-default-600">
-                  Decisions
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {top10.map(({ handle, count }, i) => (
-                <tr
-                  key={handle}
-                  className="border-b border-default-100 last:border-0"
-                >
-                  <td className="py-2 flex items-center gap-2">
-                    <span className="text-default-400 w-5 text-right text-xs">
-                      {i + 1}.
-                    </span>
-                    <span className="font-mono">{handle}</span>
-                  </td>
-                  <td className="py-2 text-right font-semibold">{count}</td>
-                </tr>
+          <Table aria-label="Contributors" removeWrapper>
+            <TableHeader>
+              <TableColumn>Handle</TableColumn>
+              <TableColumn>Kind</TableColumn>
+              <TableColumn>Created</TableColumn>
+              <TableColumn>Recommended</TableColumn>
+              <TableColumn>Decided</TableColumn>
+              <TableColumn>Followed rec.</TableColumn>
+              <TableColumn>Acceptance rate</TableColumn>
+            </TableHeader>
+            <TableBody>
+              {rows.map((r) => (
+                <TableRow key={r.handle} className="cursor-pointer">
+                  <TableCell>
+                    <Link href={`/users/${r.handle}`}>
+                      <span className="text-primary hover:underline">
+                        {r.handle}
+                      </span>
+                    </Link>
+                  </TableCell>
+                  <TableCell>
+                    <Chip
+                      size="sm"
+                      variant="flat"
+                      color={r.kind === "agent" ? "secondary" : "primary"}
+                    >
+                      {r.kind}
+                    </Chip>
+                  </TableCell>
+                  <TableCell>{r.created}</TableCell>
+                  <TableCell>{r.recommended}</TableCell>
+                  <TableCell>{r.decided}</TableCell>
+                  <TableCell>{r.followedRec}</TableCell>
+                  <TableCell className="font-semibold">{pct(r.rate)}</TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         )}
       </CardBody>
     </Card>
   );
 }
 
-// ---- Main Dashboard ----
+// ---------------------------------------------------------------------------
+// Main
+// ---------------------------------------------------------------------------
 
 export function Dashboard() {
+  const treesQuery = useTrees();
+  const allSlugs = useMemo(
+    () => treesQuery.data?.map((t) => t.slug) ?? [],
+    [treesQuery.data],
+  );
+
+  // Selected trees state — empty == all trees.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  // The slugs we actually fetch from. Empty selection -> all trees.
+  const activeSlugs = useMemo(
+    () => (selected.size === 0 ? allSlugs : allSlugs.filter((s) => selected.has(s))),
+    [allSlugs, selected],
+  );
+
+  const { decisions, isLoading: decisionsLoading } = useAllDecisions(activeSlugs);
+  const actorsQuery = useActors();
+
+  const isLoading =
+    treesQuery.isLoading || decisionsLoading || actorsQuery.isLoading;
+
   return (
     <div className="p-6 max-w-7xl mx-auto">
-      <h1 className="text-2xl font-bold mb-6">Dashboard</h1>
+      <div className="flex items-baseline justify-between mb-6 gap-4 flex-wrap">
+        <h1 className="text-2xl font-bold">Dashboard</h1>
+        <TreeFilter
+          allSlugs={allSlugs}
+          selected={selected}
+          setSelected={setSelected}
+        />
+      </div>
 
-      {/* Grid layout: 2-col on desktop, 1-col mobile */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {/* Headline metric — full width */}
-        <HeadlineMetric />
+        <HeadlineMetric decisions={decisions} isLoading={isLoading} />
+        <AgentVsHumanCard
+          decisions={decisions}
+          actors={actorsQuery.data}
+          isLoading={isLoading}
+        />
 
-        {/* Summary tiles — 4 tiles, each half width on desktop */}
-        <SummaryTiles />
+        <SummaryTiles
+          decisions={decisions}
+          treeCount={activeSlugs.length}
+          isLoading={isLoading}
+        />
 
-        {/* Charts row */}
-        <StatusPie />
-        <PriorityBar />
+        <StatusPie decisions={decisions} isLoading={isLoading} />
+        <PriorityBar decisions={decisions} isLoading={isLoading} />
 
-        {/* Activity line — full width */}
         <ActivityLine />
 
-        {/* Top contributors */}
-        <TopContributors />
+        <ContributorsTable
+          decisions={decisions}
+          actors={actorsQuery.data}
+          isLoading={isLoading}
+        />
       </div>
     </div>
   );

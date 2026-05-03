@@ -1,15 +1,16 @@
 import { useMemo } from "react";
-import ReactFlow, {
+import {
+  ReactFlow,
   Background,
   MarkerType,
   type Node,
   type Edge,
-} from "reactflow";
+} from "@xyflow/react";
 import { Chip, Spinner } from "@heroui/react";
 import { formatDistanceToNow } from "date-fns";
 import { useHistory } from "@/api/query";
 import type { Event, Action } from "@/api/types.gen";
-import "reactflow/dist/style.css";
+import "@xyflow/react/dist/style.css";
 
 // ---- Action chip color ----
 const ACTION_COLORS: Partial<Record<Action, string>> = {
