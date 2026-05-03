@@ -56,3 +56,4 @@ Thumbs.db
 *.db
 .beads-credential-key
 .claude/worktrees/
+.claire/
