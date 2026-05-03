@@ -11,11 +11,9 @@ import type {
   PaginatedResponse,
   Metrics,
   Event,
+  AuditResponse,
+  QueueItem,
 } from "@/api/types.gen";
-
-export interface HistoryResponse {
-  events: Event[];
-}
 
 export const queryClient = new QueryClient({
   defaultOptions: {
@@ -35,9 +33,12 @@ export const keys = {
   decision: (tree: string, id: string) =>
     ["trees", tree, "decisions", id] as const,
   metrics: (tree: string) => ["trees", tree, "metrics"] as const,
-  audit: (tree?: string) => ["audit", tree ?? "all"] as const,
-  history: (tree: string, id: string) =>
-    ["trees", tree, "decisions", id, "history"] as const,
+  audit: (tree?: string, filters?: Record<string, string>) =>
+    ["audit", tree ?? "all", filters ?? {}] as const,
+  auditWithFilters: (tree: string, filters: Record<string, string>) =>
+    ["audit", tree, filters] as const,
+  queue: (tree: string, kind: string) =>
+    ["trees", tree, "queues", kind] as const,
   actors: () => ["actors"] as const,
   health: () => ["health"] as const,
   history: (tree: string, id: string) => ["history", tree, id] as const,
@@ -115,18 +116,66 @@ export function useMetrics(tree: string): UseQueryResult<Metrics> {
   });
 }
 
-export function useHistory(
+export interface AuditFilters {
+  action?: string;
+  actor?: string;
+  since?: string;
+  until?: string;
+  cursor?: string;
+  limit?: string;
+}
+
+export function useAuditList(
   tree: string,
-  id: string,
-): UseQueryResult<HistoryResponse> {
+  filters: AuditFilters = {},
+): UseQueryResult<AuditResponse> {
+  const filterRecord: Record<string, string> = {};
+  if (tree) filterRecord.tree = tree;
+  if (filters.action) filterRecord.action = filters.action;
+  if (filters.actor) filterRecord.actor = filters.actor;
+  if (filters.since) filterRecord.since = filters.since;
+  if (filters.until) filterRecord.until = filters.until;
+  if (filters.cursor) filterRecord.cursor = filters.cursor;
+  if (filters.limit) filterRecord.limit = filters.limit;
+
   return useQuery({
-    queryKey: keys.history(tree, id),
+    queryKey: keys.audit(tree, filterRecord),
     queryFn: async () => {
-      const { data } = await apiFetch<HistoryResponse>(
-        `/v1/trees/${tree}/decisions/${id}/history`,
-      );
+      const qs = new URLSearchParams(filterRecord).toString();
+      const url = `/v1/audit${qs ? `?${qs}` : ""}`;
+      const { data } = await apiFetch<AuditResponse>(url);
       return data;
     },
-    enabled: !!tree && !!id,
+    enabled: Boolean(tree),
+  });
+}
+
+export interface QueueResponseSpearhead {
+  items: QueueItem[];
+}
+
+export interface QueueResponseQuickWins {
+  items: Decision[];
+}
+
+export function useQueue(
+  tree: string,
+  kind: "quick-wins" | "spearhead",
+  limit?: number,
+): UseQueryResult<QueueItem[] | Decision[]> {
+  return useQuery({
+    queryKey: keys.queue(tree, kind),
+    queryFn: async () => {
+      const qs = limit ? `?limit=${limit}` : "";
+      const url = `/v1/trees/${tree}/queues/${kind}${qs}`;
+      if (kind === "spearhead") {
+        const { data } = await apiFetch<QueueResponseSpearhead>(url);
+        return data.items;
+      } else {
+        const { data } = await apiFetch<QueueResponseQuickWins>(url);
+        return data.items;
+      }
+    },
+    enabled: Boolean(tree),
   });
 }

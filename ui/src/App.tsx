@@ -7,6 +7,9 @@ import { Layout } from "@/components/Layout";
 import { useAuditStream } from "@/api/sse";
 import GraphView from "@/views/GraphView";
 import { DecisionView } from "@/views/DecisionView";
+import { AuditView } from "@/views/AuditView";
+import { QueueView } from "@/views/QueueView";
+import { KanbanView } from "@/views/KanbanView";
 import "@/styles/globals.css";
 
 // Stub views
@@ -15,12 +18,6 @@ function HomeView() {
 }
 function TreeView() {
   return <GraphView />;
-}
-function QueueView() {
-  return <div>Not implemented: QueueView</div>;
-}
-function AuditView() {
-  return <div>Not implemented: AuditView</div>;
 }
 function DashboardView() {
   return <div>Not implemented: DashboardView</div>;
@@ -47,6 +44,7 @@ function AppRoutes() {
         <Route path="/trees/:tree/decisions/:id" component={DecisionView} />
         <Route path="/trees/:tree/queue/:kind" component={QueueView} />
         <Route path="/trees/:tree/audit" component={AuditView} />
+        <Route path="/trees/:tree/kanban" component={KanbanView} />
         <Route path="/dashboard" component={DashboardView} />
         <Route path="/actors" component={ActorsView} />
         <Route path="/settings" component={SettingsView} />
