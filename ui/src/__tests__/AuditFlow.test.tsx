@@ -67,7 +67,7 @@ const mockEvents: Event[] = [
 
 vi.mock("@/api/query", () => ({
   useHistory: () => ({
-    data: { events: mockEvents },
+    data: mockEvents,
     isLoading: false,
     isError: false,
   }),

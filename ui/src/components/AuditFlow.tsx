@@ -112,8 +112,8 @@ export default function AuditFlow({ tree, id }: AuditFlowProps) {
   const { data, isLoading, isError } = useHistory(tree, id);
 
   const { nodes, edges } = useMemo(() => {
-    if (!data?.events?.length) return { nodes: [], edges: [] };
-    return buildAuditGraph(data.events);
+    if (!data?.length) return { nodes: [], edges: [] };
+    return buildAuditGraph(data);
   }, [data]);
 
   if (isLoading) {
