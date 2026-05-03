@@ -386,6 +386,84 @@ func TestAuditListPagination(t *testing.T) {
 	}
 }
 
+// ---- TestAuditListOrderDesc ----
+
+func TestAuditListOrderDesc(t *testing.T) {
+	cfg := testConfig(t)
+	srv := server.New(cfg)
+	repo := cfg.RepoRoot
+
+	for i := 0; i < 5; i++ {
+		appendEvent(t, repo, core.Event{
+			Actor:  "cam",
+			Action: core.ActionCreate,
+			Kind:   core.KindDecision,
+			ID:     fmt.Sprintf("00000000000000000000000%03d", i+1),
+		})
+		time.Sleep(2 * time.Millisecond)
+	}
+
+	// limit=2&order=desc must return the two newest events, newest first.
+	req := httptest.NewRequest(http.MethodGet, "/v1/audit?limit=2&order=desc", nil)
+	w := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d; want 200", w.Code)
+	}
+	var page1 struct {
+		Events     []core.Event `json:"events"`
+		NextCursor *string      `json:"next_cursor"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&page1); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(page1.Events) != 2 {
+		t.Fatalf("events = %d; want 2", len(page1.Events))
+	}
+	if page1.Events[0].Ts.Before(page1.Events[1].Ts) {
+		t.Errorf("desc order broken: first event ts %v < second %v",
+			page1.Events[0].Ts, page1.Events[1].Ts)
+	}
+	if page1.NextCursor == nil {
+		t.Fatal("next_cursor should be set on first page")
+	}
+
+	// Page 2 with desc cursor: should walk further back in time.
+	req2 := httptest.NewRequest(http.MethodGet,
+		"/v1/audit?limit=2&order=desc&cursor="+*page1.NextCursor, nil)
+	w2 := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(w2, req2)
+	var page2 struct {
+		Events     []core.Event `json:"events"`
+		NextCursor *string      `json:"next_cursor"`
+	}
+	if err := json.NewDecoder(w2.Body).Decode(&page2); err != nil {
+		t.Fatalf("page2 decode: %v", err)
+	}
+	if len(page2.Events) != 2 {
+		t.Fatalf("page2 events = %d; want 2", len(page2.Events))
+	}
+	// Each page-2 event must be strictly older than the oldest page-1 event.
+	page1Tail := page1.Events[len(page1.Events)-1].EventID
+	for _, e2 := range page2.Events {
+		if e2.EventID >= page1Tail {
+			t.Errorf("page2 event %q not strictly older than page1 tail %q",
+				e2.EventID, page1Tail)
+		}
+	}
+}
+
+func TestAuditListOrderInvalid(t *testing.T) {
+	cfg := testConfig(t)
+	srv := server.New(cfg)
+	req := httptest.NewRequest(http.MethodGet, "/v1/audit?order=sideways", nil)
+	w := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d; want 400 for invalid order", w.Code)
+	}
+}
+
 // ---- TestAuditShowFound / NotFound ----
 
 func TestAuditShowFound(t *testing.T) {

@@ -71,7 +71,8 @@ func parseRelativeDuration(s string) (time.Time, error) {
 // buildFilter constructs an audit.Filter from query parameters.
 // It does NOT apply the limit or cursor to the filter (those are handled at
 // the pagination layer so we can detect "more pages exist").
-func buildFilter(r *http.Request) (audit.Filter, string, int, error) {
+// Returns: filter, cursor, limit, descending?, error.
+func buildFilter(r *http.Request) (audit.Filter, string, int, bool, error) {
 	q := r.URL.Query()
 
 	var f audit.Filter
@@ -88,31 +89,41 @@ func buildFilter(r *http.Request) (audit.Filter, string, int, error) {
 	var err error
 	f.Since, err = parseRelativeDuration(q.Get("since"))
 	if err != nil {
-		return audit.Filter{}, "", 0, fmt.Errorf("since: %w", err)
+		return audit.Filter{}, "", 0, false, fmt.Errorf("since: %w", err)
 	}
 	f.Until, err = parseRelativeDuration(q.Get("until"))
 	if err != nil {
-		return audit.Filter{}, "", 0, fmt.Errorf("until: %w", err)
+		return audit.Filter{}, "", 0, false, fmt.Errorf("until: %w", err)
 	}
 
 	limit := 50
 	if lStr := q.Get("limit"); lStr != "" {
 		limit, err = strconv.Atoi(lStr)
 		if err != nil || limit < 1 {
-			return audit.Filter{}, "", 0, fmt.Errorf("limit must be a positive integer")
+			return audit.Filter{}, "", 0, false, fmt.Errorf("limit must be a positive integer")
 		}
 		if limit > 1000 {
 			limit = 1000
 		}
 	}
 
+	desc := false
+	switch q.Get("order") {
+	case "", "asc":
+		// default: oldest first
+	case "desc":
+		desc = true
+	default:
+		return audit.Filter{}, "", 0, false, fmt.Errorf("order must be 'asc' or 'desc'")
+	}
+
 	cursor := q.Get("cursor")
-	return f, cursor, limit, nil
+	return f, cursor, limit, desc, nil
 }
 
 // auditList handles GET /v1/audit.
 func (h *auditHandlers) auditList(w http.ResponseWriter, r *http.Request) {
-	f, cursor, limit, err := buildFilter(r)
+	f, cursor, limit, desc, err := buildFilter(r)
 	if err != nil {
 		WriteProblem(w, r, BadRequest(err.Error()))
 		return
@@ -125,11 +136,27 @@ func (h *auditHandlers) auditList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Apply cursor: skip events with event_id <= cursor.
+	// audit.Read returns ascending by (ts, event_id). Reverse for desc so
+	// pagination semantics stay symmetric: cursor always means "give me
+	// items strictly after this position in the current order."
+	if desc {
+		for i, j := 0, len(events)-1; i < j; i, j = i+1, j-1 {
+			events[i], events[j] = events[j], events[i]
+		}
+	}
+
+	// Apply cursor: skip events at-or-before the cursor in the active order.
+	// asc:  skip event_id <= cursor    (move forward in time)
+	// desc: skip event_id >= cursor    (move backward in time)
 	if cursor != "" {
 		start := 0
-		for start < len(events) && events[start].EventID <= cursor {
-			start++
+		for start < len(events) {
+			id := events[start].EventID
+			if (!desc && id <= cursor) || (desc && id >= cursor) {
+				start++
+				continue
+			}
+			break
 		}
 		events = events[start:]
 	}
