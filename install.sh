@@ -2,7 +2,7 @@
 # dtree installer — downloads the right pre-built binary from GitHub Releases.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/cgould/dtree/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/camggould/dtree/main/install.sh | sh
 #   curl -fsSL .../install.sh | sh -s -- --version v0.2.0
 #   curl -fsSL .../install.sh | sh -s -- --prefix ~/.local/bin
 #
@@ -21,7 +21,7 @@
 
 set -eu
 
-REPO="cgould/dtree"
+REPO="camggould/dtree"
 PREFIX="/usr/local/bin"
 VERSION=""
 

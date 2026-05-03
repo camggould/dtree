@@ -24,41 +24,35 @@ Most teams scatter decision-making across Slack threads, ad-hoc docs, and engine
 
 ## Installation
 
-### Recommended: one-line install
+### From source (current path)
+
+Until the first release is tagged, build from source. Requires Go 1.25+ and Node 20+:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/cgould/dtree/main/install.sh | sh
-```
-
-Detects your OS / arch (linux, darwin × amd64, arm64), downloads the matching release tarball from GitHub, verifies its SHA-256, and installs to `/usr/local/bin/dtree` (or `~/.local/bin/dtree` if `/usr/local/bin` isn't writable). **No Go, Node, or npm needed.** The UI is embedded in the binary; SQLite (with FTS5) is statically linked.
-
-Pin a specific version: `... | sh -s -- --version v0.2.0`. Custom install dir: `... | sh -s -- --prefix ~/.local/bin`. See `install.sh --help` for all flags.
-
-### Verify
-
-```sh
-dtree version
-```
-
-### Other install paths
-
-**Via `go install`** (requires Go 1.25+):
-
-```sh
-go install -tags sqlite_fts5 github.com/cgould/dtree/cmd/dtree@latest
-```
-
-The `sqlite_fts5` build tag is required for full-text search.
-
-**From source** (requires Go 1.25+ and Node 20+):
-
-```sh
-git clone https://github.com/cgould/dtree.git
+git clone https://github.com/camggould/dtree.git
 cd dtree
 make setup    # installs Go + npm deps and regenerates TS types
 make ui       # builds the embedded web UI
 make build    # produces ./dtree (single binary, UI baked in)
 sudo install -m 0755 dtree /usr/local/bin/dtree
+```
+
+The resulting binary is fully self-contained — UI baked in, SQLite (with FTS5) statically linked, no runtime deps beyond libc.
+
+### Pre-built binaries (coming soon)
+
+Once `v0.1.0` is tagged, the following one-liner will fetch a verified pre-built binary for your platform — no Go or Node toolchain required:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/camggould/dtree/main/install.sh | sh
+```
+
+It detects your OS/arch (linux, darwin × amd64, arm64), downloads the matching tarball, verifies its SHA-256, and installs to `/usr/local/bin/dtree` (falling back to `~/.local/bin` if needed). Pin a version with `... | sh -s -- --version vX.Y.Z`; see `install.sh --help` for all flags.
+
+### Verify
+
+```sh
+dtree version
 ```
 
 ## Quickstart
@@ -340,7 +334,7 @@ Use `--read-only` to give agents query-only access. See `SKILL.md` for an agent-
 ### Setup
 
 ```sh
-git clone https://github.com/cgould/dtree.git
+git clone https://github.com/camggould/dtree.git
 cd dtree
 make setup      # installs Go + npm deps, regenerates TS types
 ```
