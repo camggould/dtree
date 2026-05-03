@@ -61,7 +61,7 @@ export function HomeView() {
       <TreesGrid trees={trees} decisions={decisions} />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <RecentActivity />
+        <RecentActivity decisions={decisions} actors={actorsQuery.data} />
         <ProposedSummary decisions={decisions} />
       </div>
     </div>
@@ -178,7 +178,13 @@ function TreesGrid({
 
 // ---------- Recent activity ----------------------------------------------
 
-function RecentActivity() {
+function RecentActivity({
+  decisions,
+  actors,
+}: {
+  decisions: import("@/api/types.gen").Decision[];
+  actors: import("@/api/types.gen").Actor[] | undefined;
+}) {
   const { data, isLoading } = useAuditList("", {
     limit: "8",
     order: "desc",
@@ -186,6 +192,25 @@ function RecentActivity() {
   const openDecision = useAppStore((s) => s.openDecision);
   const [, navigate] = useLocation();
   const events = data?.items ?? [];
+
+  // Lookups: by id for relate target/src, by handle for "from <name>".
+  const decisionsById = useMemo(() => {
+    const m = new Map<string, import("@/api/types.gen").Decision>();
+    for (const d of decisions) m.set(d.id, d);
+    return m;
+  }, [decisions]);
+  const actorsByHandle = useMemo(() => {
+    const m = new Map<string, import("@/api/types.gen").Actor>();
+    for (const a of actors ?? []) m.set(a.handle, a);
+    return m;
+  }, [actors]);
+
+  const actorLabel = (handle: string): string => {
+    const a = actorsByHandle.get(handle);
+    if (!a) return handle;
+    const display = a.name || a.handle;
+    return a.kind === "agent" ? `${display} (agent)` : display;
+  };
 
   return (
     <Card>
@@ -201,14 +226,12 @@ function RecentActivity() {
         ) : (
           <div className="flex flex-col gap-2">
             {events.slice(0, 8).map((e) => {
-              const after = e.payload?.after as
+              const payload = (e.payload ?? {}) as Record<string, unknown>;
+              const after = payload.after as
                 | Record<string, unknown>
                 | undefined;
-              const summary = (after?.summary as string | undefined) ?? null;
 
-              // For tree events, the tree slug lives in e.id (per the
-              // Event{Kind: tree, ID: slug} construction in the backend).
-              // payload.after.title is the human-friendly name.
+              // Tree events: slug is in e.id (Kind=tree, ID=slug).
               const treeSlug =
                 e.kind === "tree"
                   ? (e.id || (after?.slug as string | undefined) || "")
@@ -220,17 +243,27 @@ function RecentActivity() {
                 e.kind === "decision" && Boolean(e.tree) && Boolean(e.id);
               const isTreeClick =
                 e.kind === "tree" && Boolean(treeSlug);
-              const clickable = isDecisionClick || isTreeClick;
+              const isRelateClick =
+                e.action === "relate" && Boolean(e.tree) && Boolean(e.id);
+              const clickable =
+                isDecisionClick || isTreeClick || isRelateClick;
 
               const handleClick = () => {
-                if (isDecisionClick) {
+                if (isDecisionClick || isRelateClick) {
                   openDecision(e.tree!, e.id);
                 } else if (isTreeClick) {
                   navigate(`/trees/${treeSlug}`);
                 }
               };
 
-              const label = summary || (e.kind === "tree" ? treeTitle : null);
+              // Headline: action-specific. Sub-line: extra context.
+              const { primary, secondary } = describeEvent(e, {
+                after,
+                payload,
+                treeTitle,
+                decisionsById,
+                actorLabel,
+              });
 
               return (
                 <button
@@ -251,12 +284,17 @@ function RecentActivity() {
                     <span className="font-medium text-foreground">
                       {e.actor}
                     </span>
-                    {label && (
+                    {primary && (
                       <span className="text-default-600 truncate">
-                        — {label}
+                        — {primary}
                       </span>
                     )}
                   </div>
+                  {secondary && (
+                    <div className="text-xs text-default-500 mt-0.5 italic">
+                      {secondary}
+                    </div>
+                  )}
                   <div className="text-xs text-default-400 mt-0.5">
                     {formatDistanceToNow(new Date(e.ts))} ago
                     {e.tree && <span> · in {e.tree}</span>}
@@ -272,6 +310,89 @@ function RecentActivity() {
       </CardBody>
     </Card>
   );
+}
+
+// describeEvent returns the action-specific headline (primary) and a
+// reasoning line (secondary) for an audit event. Kept outside the
+// component so it can be exercised by future tests.
+function describeEvent(
+  e: import("@/api/types.gen").Event,
+  ctx: {
+    after: Record<string, unknown> | undefined;
+    payload: Record<string, unknown>;
+    treeTitle: string;
+    decisionsById: Map<string, import("@/api/types.gen").Decision>;
+    actorLabel: (handle: string) => string;
+  },
+): { primary: string | null; secondary: string | null } {
+  const { after, payload, treeTitle, decisionsById, actorLabel } = ctx;
+  const summary = (after?.summary as string | undefined) ?? null;
+
+  switch (e.action) {
+    case "decide": {
+      const choice = (after?.actual_choice as string | undefined) ?? null;
+      const reason =
+        (after?.actual_choice_reason as string | undefined) ?? null;
+      const isRec = Boolean(after?.is_recommended);
+      const recBy = (after?.recommended_by as string | undefined) ?? null;
+
+      const parts: string[] = [];
+      if (choice) parts.push(`chose “${choice}”`);
+      if (isRec && recBy) {
+        parts.push(`accepted recommendation from ${actorLabel(recBy)}`);
+      } else if (reason) {
+        parts.push(reason);
+      }
+      return { primary: summary, secondary: parts.join(" — ") || null };
+    }
+
+    case "relate":
+    case "unrelate": {
+      const srcId = (payload.src as string | undefined) ?? e.id;
+      const targetId = (payload.target as string | undefined) ?? "";
+      const type = (payload.type as string | undefined) ?? "relates_to";
+      const srcSummary =
+        decisionsById.get(srcId)?.summary ?? shortId(srcId);
+      const targetSummary =
+        decisionsById.get(targetId)?.summary ?? shortId(targetId);
+      const verb = e.action === "unrelate" ? `un-${type}` : type;
+      return {
+        primary: `${srcSummary} ${verb.replace(/_/g, " ")} ${targetSummary}`,
+        secondary: null,
+      };
+    }
+
+    case "supersede": {
+      const oldId = (payload.old as string | undefined) ?? e.id;
+      const newId = (payload.new as string | undefined) ?? "";
+      const oldSummary =
+        decisionsById.get(oldId)?.summary ?? summary ?? shortId(oldId);
+      const newSummary =
+        decisionsById.get(newId)?.summary ?? shortId(newId);
+      return {
+        primary: `${oldSummary} superseded by ${newSummary}`,
+        secondary: null,
+      };
+    }
+
+    case "scope_out": {
+      const reason = (payload.reason as string | undefined) ?? null;
+      return { primary: summary, secondary: reason };
+    }
+
+    case "tree_create":
+    case "tree_rename":
+    case "tree_archive":
+    case "tree_delete":
+      return { primary: treeTitle || null, secondary: null };
+
+    default:
+      return { primary: summary, secondary: null };
+  }
+}
+
+function shortId(id: string): string {
+  return id ? id.slice(0, 8) : "(unknown)";
 }
 
 // ---------- Proposed-summary panel ---------------------------------------
