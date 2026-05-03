@@ -6,12 +6,12 @@ import {
   Chip,
   Button,
 } from "@heroui/react";
-import { Link } from "wouter";
 import type { Decision } from "@/api/types.gen";
 import { humanStatus, statusColor } from "@/util/labels";
 
 /** Reusable modal that lists decisions filtered by some metric/segment.
- *  Click a row → navigate to its detail panel.
+ *  Click a row → onSelect(tree, id). Caller decides whether to swap to a
+ *  stacked DecisionModal or navigate.
  */
 export function DecisionListModal({
   isOpen,
@@ -19,12 +19,14 @@ export function DecisionListModal({
   title,
   description,
   decisions,
+  onSelect,
 }: {
   isOpen: boolean;
   onClose: () => void;
   title: string;
   description?: string;
   decisions: Decision[];
+  onSelect: (tree: string, id: string) => void;
 }) {
   return (
     <Modal
@@ -53,10 +55,11 @@ export function DecisionListModal({
           ) : (
             <div className="flex flex-col gap-2">
               {decisions.map((d) => (
-                <Link
+                <button
                   key={d.id}
-                  href={`/trees/${d.tree}/decisions/${d.id}`}
-                  onClick={onClose}
+                  type="button"
+                  className="text-left"
+                  onClick={() => onSelect(d.tree, d.id)}
                 >
                   <div className="border border-default-200 hover:border-primary rounded-md p-3 cursor-pointer transition-colors">
                     <div className="flex items-start justify-between gap-3">
@@ -90,7 +93,7 @@ export function DecisionListModal({
                       </div>
                     </div>
                   </div>
-                </Link>
+                </button>
               ))}
             </div>
           )}

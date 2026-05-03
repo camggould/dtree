@@ -18,7 +18,7 @@ import type {
   Priority,
   Actor,
 } from "@/api/types.gen";
-import { subDays, format, parseISO } from "date-fns";
+import { subDays } from "date-fns";
 
 export const queryClient = new QueryClient({
   defaultOptions: {
@@ -149,8 +149,14 @@ export function useAuditList(
     queryFn: async () => {
       const qs = new URLSearchParams(filterRecord).toString();
       const url = `/v1/audit${qs ? `?${qs}` : ""}`;
-      const { data } = await apiFetch<AuditResponse>(url);
-      return data;
+      const { data } = await apiFetch<AuditResponse & { events?: Event[] }>(
+        url,
+      );
+      // Server returns {events: [...]} on /v1/audit; normalise to {items}.
+      return {
+        items: data.events ?? data.items ?? [],
+        next_cursor: data.next_cursor,
+      };
     },
     enabled: Boolean(tree),
   });
@@ -364,11 +370,15 @@ export function useActivityCounts(days = 30): UseQueryResult<DailyCount[]> {
 
       const countMap = new Map<string, number>();
       for (let i = days - 1; i >= 0; i--) {
-        const day = format(subDays(today, i), "yyyy-MM-dd");
+        // Bucket key in UTC (slice off the time portion).
+        const day = subDays(today, i).toISOString().slice(0, 10);
         countMap.set(day, 0);
       }
       for (const event of events) {
-        const day = format(parseISO(event.ts), "yyyy-MM-dd");
+        // event.ts is RFC3339 with Z; slice the YYYY-MM-DD prefix instead of
+        // formatting through local TZ (date-fns format() uses local), so days
+        // line up across timezones.
+        const day = event.ts.slice(0, 10);
         if (countMap.has(day)) {
           countMap.set(day, (countMap.get(day) ?? 0) + 1);
         }

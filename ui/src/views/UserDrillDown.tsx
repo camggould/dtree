@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useParams, Link } from "wouter";
+import { useParams } from "wouter";
 import {
   Card,
   CardBody,
@@ -30,6 +30,7 @@ import {
 } from "@/analytics/insights";
 import { TreeFilter } from "@/components/TreeFilter";
 import { DecisionListModal } from "@/components/DecisionListModal";
+import { useAppStore } from "@/store/app";
 import { humanStatus } from "@/util/labels";
 import type { Decision } from "@/api/types.gen";
 
@@ -679,6 +680,7 @@ export function UserDrillDown() {
 
   // Drill-in modal state
   const [drillState, setDrillState] = useState<DrillState | null>(null);
+  const openDecision = useAppStore((s) => s.openDecision);
   const drill = (
     bucket: UserBucket,
     title: string,
@@ -698,17 +700,23 @@ export function UserDrillDown() {
     [drillState, handle, decisions, actorsQuery.data],
   );
 
+  // Origin-aware back: prefer browser history when there's somewhere to go,
+  // otherwise fall back to the actors list (most likely entry point).
+  const back = () => {
+    if (window.history.length > 1) window.history.back();
+    else window.location.assign("/ui/actors");
+  };
+
   return (
     <div className="p-6 max-w-7xl mx-auto">
-      <Link href="/dashboard">
-        <Button
-          variant="light"
-          size="sm"
-          startContent={<ArrowLeft size={16} />}
-        >
-          Back to dashboard
-        </Button>
-      </Link>
+      <Button
+        variant="light"
+        size="sm"
+        startContent={<ArrowLeft size={16} />}
+        onPress={back}
+      >
+        Back
+      </Button>
 
       <div className="mt-4 mb-6 flex items-center justify-between gap-4 flex-wrap">
         <div className="flex items-baseline gap-3 flex-wrap">
@@ -755,6 +763,10 @@ export function UserDrillDown() {
         title={drillState?.title ?? ""}
         description={drillState?.description}
         decisions={drillDecisions}
+        onSelect={(tree, id) => {
+          setDrillState(null);
+          openDecision(tree, id);
+        }}
       />
     </div>
   );

@@ -45,8 +45,14 @@ import {
   computeAgentHumanBreakdown,
   computeUserStats,
   isAccepted,
+  hasRecommendation,
+  actorKind,
   type RateStat,
 } from "@/analytics/insights";
+import { useAppStore } from "@/store/app";
+import { DecisionListModal } from "@/components/DecisionListModal";
+import { humanPriority } from "@/util/labels";
+import type { Decision } from "@/api/types.gen";
 
 const STATUS_COLORS: Record<string, string> = {
   proposed: "#3b82f6",
@@ -117,18 +123,33 @@ function TreeFilter({
 // Cards
 // ---------------------------------------------------------------------------
 
+type DrillFn = (
+  title: string,
+  decisions: Decision[],
+  description?: string,
+) => void;
+
 function AcceptanceRow({
   label,
   stat,
   color,
+  onClick,
 }: {
   label: string;
   stat: RateStat;
   color: "success" | "primary" | "secondary" | "default";
+  onClick?: () => void;
 }) {
   return (
-    <div className="flex items-center gap-3">
-      <div className="min-w-24 text-sm font-medium">{label}</div>
+    <button
+      type="button"
+      disabled={!onClick}
+      onClick={onClick}
+      className={`flex items-center gap-3 w-full rounded-md p-1 transition-colors ${
+        onClick ? "hover:bg-default-100 cursor-pointer" : ""
+      }`}
+    >
+      <div className="min-w-32 text-sm font-medium text-left">{label}</div>
       <Progress
         aria-label={label}
         value={stat.rate ?? 0}
@@ -142,7 +163,35 @@ function AcceptanceRow({
           ({stat.accepted}/{stat.total})
         </span>
       </div>
-    </div>
+    </button>
+  );
+}
+
+function MiniStat({
+  value,
+  label,
+  color,
+  onClick,
+}: {
+  value: string | number;
+  label: string;
+  color?: "primary" | "success" | "default";
+  onClick?: () => void;
+}) {
+  const cls =
+    color === "success" ? "text-success" : color === "primary" ? "text-primary" : "";
+  return (
+    <button
+      type="button"
+      disabled={!onClick}
+      onClick={onClick}
+      className={`flex flex-col items-center text-center rounded-md p-2 transition-colors ${
+        onClick ? "hover:bg-default-100 cursor-pointer" : ""
+      }`}
+    >
+      <div className={`text-2xl font-bold ${cls}`}>{value}</div>
+      <div className="text-xs text-default-500 mt-1">{label}</div>
+    </button>
   );
 }
 
@@ -150,68 +199,135 @@ function AgentVsHumanCard({
   decisions,
   actors,
   isLoading,
+  openDrill,
 }: {
-  decisions: ReturnType<typeof useAllDecisions>["decisions"];
-  actors: ReturnType<typeof useActors>["data"];
+  decisions: Decision[];
+  actors: import("@/api/types.gen").Actor[] | undefined;
   isLoading: boolean;
+  openDrill: DrillFn;
 }) {
+  const acts = actors ?? [];
   const breakdown = useMemo(
-    () => computeAgentHumanBreakdown(decisions, actors ?? []),
-    [decisions, actors],
+    () => computeAgentHumanBreakdown(decisions, acts),
+    [decisions, acts],
+  );
+
+  // "Decided BY agent/human" — separate from "agent's REC accepted".
+  const decided = decisions.filter((d) => d.status === "decided");
+  const decidedByAgent = decided.filter(
+    (d) => actorKind(acts, (d.decided_by ?? [])[0]) === "agent",
+  );
+  const decidedByHuman = decided.filter(
+    (d) => actorKind(acts, (d.decided_by ?? [])[0]) === "human",
+  );
+
+  // For drill into "agent recs accepted":
+  const agentRecAccepted = decisions.filter(
+    (d) =>
+      actorKind(acts, d.recommended_by) === "agent" && isAccepted(d),
+  );
+  const humanRecAccepted = decisions.filter(
+    (d) =>
+      actorKind(acts, d.recommended_by) === "human" && isAccepted(d),
   );
 
   return (
     <Card className="md:col-span-2">
       <CardHeader>
         <div>
-          <h2 className="text-lg font-semibold">Delegation & acceptance</h2>
+          <h2 className="text-lg font-semibold">Delegation &amp; acceptance</h2>
           <p className="text-sm text-default-500">
-            How often decisions follow a recommendation, broken down by who
-            recommended
+            Two complementary lenses on agent/human roles in decision-making.
+            Click any number to see the underlying decisions.
           </p>
         </div>
       </CardHeader>
-      <CardBody className="gap-4">
+      <CardBody className="gap-5">
         {isLoading ? (
           <Spinner />
         ) : (
           <>
-            <div className="flex gap-6 text-center justify-around pb-3 border-b border-default-200">
-              <div>
-                <div className="text-2xl font-bold">{breakdown.totalDecided}</div>
-                <div className="text-xs text-default-500">Decided</div>
+            {/* Lens 1: Who DECIDED */}
+            <div>
+              <div className="text-sm font-medium mb-2 text-foreground">
+                Who made the call
               </div>
-              <div>
-                <div className="text-2xl font-bold">
-                  {breakdown.withRecommendation}
-                </div>
-                <div className="text-xs text-default-500">With recommendation</div>
-              </div>
-              <div>
-                <div className="text-2xl font-bold text-primary">
-                  {pct(breakdown.delegationRate)}
-                </div>
-                <div className="text-xs text-default-500">Delegation rate</div>
+              <div className="grid grid-cols-3 gap-2">
+                <MiniStat
+                  value={decided.length}
+                  label="Total decided"
+                  onClick={() => openDrill("Decided decisions", decided)}
+                />
+                <MiniStat
+                  value={decidedByAgent.length}
+                  label="Decided by agent"
+                  color="primary"
+                  onClick={() =>
+                    openDrill(
+                      "Decisions made by an agent",
+                      decidedByAgent,
+                      "An agent appeared in decided_by[]; the agent owns the outcome (regardless of who suggested it).",
+                    )
+                  }
+                />
+                <MiniStat
+                  value={decidedByHuman.length}
+                  label="Decided by human"
+                  color="primary"
+                  onClick={() =>
+                    openDrill(
+                      "Decisions made by a human",
+                      decidedByHuman,
+                      "A human appeared in decided_by[].",
+                    )
+                  }
+                />
               </div>
             </div>
 
-            <AcceptanceRow
-              label="Agent rec."
-              stat={breakdown.agent}
-              color="secondary"
-            />
-            <AcceptanceRow
-              label="Human rec."
-              stat={breakdown.human}
-              color="primary"
-            />
-            {breakdown.unknown.total > 0 && (
-              <AcceptanceRow
-                label="Unknown"
-                stat={breakdown.unknown}
-                color="default"
-              />
-            )}
+            {/* Lens 2: Whose RECOMMENDATIONS were accepted */}
+            <div>
+              <div className="text-sm font-medium mb-2 text-foreground">
+                Whose recommendations were accepted
+              </div>
+              <div className="space-y-2">
+                <AcceptanceRow
+                  label="Agent recs accepted"
+                  stat={breakdown.agent}
+                  color="secondary"
+                  onClick={() =>
+                    openDrill(
+                      "Agent recommendations that were accepted",
+                      agentRecAccepted,
+                      "Decided where the recommender was an agent and the chosen outcome matched the recommendation.",
+                    )
+                  }
+                />
+                <AcceptanceRow
+                  label="Human recs accepted"
+                  stat={breakdown.human}
+                  color="primary"
+                  onClick={() =>
+                    openDrill(
+                      "Human recommendations that were accepted",
+                      humanRecAccepted,
+                    )
+                  }
+                />
+                {breakdown.unknown.total > 0 && (
+                  <AcceptanceRow
+                    label="Unknown recommender"
+                    stat={breakdown.unknown}
+                    color="default"
+                  />
+                )}
+              </div>
+              <div className="mt-3 pt-3 border-t border-divider text-xs text-default-500">
+                <strong>Delegation rate</strong>: {pct(breakdown.delegationRate)} —{" "}
+                {breakdown.withRecommendation} of {breakdown.totalDecided} decided
+                decisions had a recommendation on the table.
+              </div>
+            </div>
           </>
         )}
       </CardBody>
@@ -222,33 +338,50 @@ function AgentVsHumanCard({
 function HeadlineMetric({
   decisions,
   isLoading,
+  openDrill,
 }: {
-  decisions: ReturnType<typeof useAllDecisions>["decisions"];
+  decisions: Decision[];
   isLoading: boolean;
+  openDrill: DrillFn;
 }) {
   const decided = decisions.filter((d) => d.status === "decided");
-  const accepted = decided.filter(isAccepted);
-  const rate = decided.length === 0 ? null : (accepted.length / decided.length) * 100;
+  const decidedWithRec = decided.filter(hasRecommendation);
+  const accepted = decidedWithRec.filter(isAccepted);
+  const rate =
+    decidedWithRec.length === 0
+      ? null
+      : (accepted.length / decidedWithRec.length) * 100;
 
   return (
     <Card className="md:col-span-2">
       <CardHeader>
         <h2 className="text-lg font-semibold">Recommendation acceptance</h2>
       </CardHeader>
-      <CardBody className="flex flex-col items-center justify-center py-6">
+      <CardBody className="flex flex-col items-center justify-center py-6 gap-2">
         {isLoading ? (
           <Spinner size="lg" />
         ) : rate === null ? (
           <p className="text-default-400 text-sm">No decided decisions yet</p>
         ) : (
           <>
-            <span className="text-6xl font-bold text-success">
-              {rate.toFixed(1)}%
-            </span>
-            <p className="mt-2 text-sm text-default-500 text-center">
-              {accepted.length} of {decided.length} decided decisions accepted
-              the recommendation
-            </p>
+            <button
+              type="button"
+              className="rounded-md hover:bg-default-100 px-4 py-2 cursor-pointer text-center"
+              onClick={() =>
+                openDrill(
+                  "Decisions that accepted the recommendation",
+                  accepted,
+                )
+              }
+            >
+              <span className="text-6xl font-bold text-success">
+                {rate.toFixed(1)}%
+              </span>
+              <p className="mt-1 text-sm text-default-500">
+                {accepted.length} of {decidedWithRec.length} decisions with a
+                recommendation followed it
+              </p>
+            </button>
           </>
         )}
       </CardBody>
@@ -260,36 +393,60 @@ function SummaryTiles({
   decisions,
   treeCount,
   isLoading,
+  openDrill,
 }: {
-  decisions: ReturnType<typeof useAllDecisions>["decisions"];
+  decisions: Decision[];
   treeCount: number;
   isLoading: boolean;
+  openDrill: DrillFn;
 }) {
-  const byStatus = decisions.reduce(
-    (acc, d) => {
-      acc[d.status] = (acc[d.status] ?? 0) + 1;
-      return acc;
+  const proposed = decisions.filter((d) => d.status === "proposed");
+  const decided = decisions.filter((d) => d.status === "decided");
+  const tiles: Array<{
+    label: string;
+    value: number;
+    onClick?: () => void;
+  }> = [
+    {
+      label: "Total decisions",
+      value: decisions.length,
+      onClick: () => openDrill("All decisions in scope", decisions),
     },
-    {} as Record<string, number>,
-  );
-  const tiles = [
-    { label: "Total decisions", value: decisions.length },
     { label: "Trees in scope", value: treeCount },
-    { label: "Proposed", value: byStatus["proposed"] ?? 0 },
-    { label: "Decided", value: byStatus["decided"] ?? 0 },
+    {
+      label: "Proposed",
+      value: proposed.length,
+      onClick: () => openDrill("Proposed decisions", proposed),
+    },
+    {
+      label: "Decided",
+      value: decided.length,
+      onClick: () => openDrill("Decided decisions", decided),
+    },
   ];
   return (
     <>
       {tiles.map((t) => (
         <Card key={t.label}>
-          <CardBody className="flex flex-col items-center justify-center py-4">
+          <CardBody className="p-0">
             {isLoading ? (
-              <Spinner size="sm" />
+              <div className="flex justify-center py-4">
+                <Spinner size="sm" />
+              </div>
             ) : (
-              <>
+              <button
+                type="button"
+                disabled={!t.onClick}
+                onClick={t.onClick}
+                className={`w-full flex flex-col items-center justify-center py-4 ${
+                  t.onClick ? "hover:bg-default-100 cursor-pointer" : ""
+                }`}
+              >
                 <span className="text-3xl font-bold">{t.value}</span>
-                <span className="text-sm text-default-500 mt-1">{t.label}</span>
-              </>
+                <span className="text-sm text-default-500 mt-1">
+                  {t.label}
+                </span>
+              </button>
             )}
           </CardBody>
         </Card>
@@ -301,19 +458,23 @@ function SummaryTiles({
 function StatusPie({
   decisions,
   isLoading,
+  openDrill,
 }: {
-  decisions: ReturnType<typeof useAllDecisions>["decisions"];
+  decisions: Decision[];
   isLoading: boolean;
+  openDrill: DrillFn;
 }) {
-  const data = Object.entries(
-    decisions.reduce(
-      (acc, d) => {
-        acc[d.status] = (acc[d.status] ?? 0) + 1;
-        return acc;
-      },
-      {} as Record<string, number>,
-    ),
-  ).map(([name, value]) => ({ name, value }));
+  const grouped = decisions.reduce(
+    (acc, d) => {
+      (acc[d.status] ??= []).push(d);
+      return acc;
+    },
+    {} as Record<string, Decision[]>,
+  );
+  const data = Object.entries(grouped).map(([name, ds]) => ({
+    name,
+    value: ds.length,
+  }));
 
   return (
     <Card>
@@ -336,6 +497,16 @@ function StatusPie({
                 cy="50%"
                 outerRadius={90}
                 dataKey="value"
+                style={{ cursor: "pointer" }}
+                onClick={(_, idx) => {
+                  const entry = data[idx ?? -1];
+                  if (entry) {
+                    openDrill(
+                      `${entry.name} decisions`,
+                      grouped[entry.name] ?? [],
+                    );
+                  }
+                }}
                 label={({ name, percent }) =>
                   `${String(name ?? "")} ${(((percent as number | undefined) ?? 0) * 100).toFixed(0)}%`
                 }
@@ -359,18 +530,23 @@ function StatusPie({
 function PriorityBar({
   decisions,
   isLoading,
+  openDrill,
 }: {
-  decisions: ReturnType<typeof useAllDecisions>["decisions"];
+  decisions: Decision[];
   isLoading: boolean;
+  openDrill: DrillFn;
 }) {
-  const counts = decisions.reduce(
+  const grouped = decisions.reduce(
     (acc, d) => {
-      acc[d.priority] = (acc[d.priority] ?? 0) + 1;
+      (acc[d.priority] ??= []).push(d);
       return acc;
     },
-    {} as Record<string, number>,
+    {} as Record<string, Decision[]>,
   );
-  const data = PRIORITY_ORDER.map((p) => ({ name: p, value: counts[p] ?? 0 }));
+  const data = PRIORITY_ORDER.map((p) => ({
+    name: p,
+    value: grouped[p]?.length ?? 0,
+  }));
 
   return (
     <Card>
@@ -389,7 +565,18 @@ function PriorityBar({
               <XAxis dataKey="name" tick={{ fontSize: 12 }} />
               <YAxis allowDecimals={false} tick={{ fontSize: 12 }} />
               <Tooltip />
-              <Bar dataKey="value">
+              <Bar
+                dataKey="value"
+                style={{ cursor: "pointer" }}
+                onClick={(entry) => {
+                  const name = (entry as { name?: string }).name;
+                  if (name)
+                    openDrill(
+                      `${humanPriority(name)} priority decisions`,
+                      grouped[name] ?? [],
+                    );
+                }}
+              >
                 {data.map((entry) => (
                   <Cell
                     key={entry.name}
@@ -557,20 +744,30 @@ export function Dashboard() {
     [treesQuery.data],
   );
 
-  // Selected trees state — empty == all trees.
   const [selected, setSelected] = useState<Set<string>>(new Set());
-
-  // The slugs we actually fetch from. Empty selection -> all trees.
   const activeSlugs = useMemo(
-    () => (selected.size === 0 ? allSlugs : allSlugs.filter((s) => selected.has(s))),
+    () =>
+      selected.size === 0 ? allSlugs : allSlugs.filter((s) => selected.has(s)),
     [allSlugs, selected],
   );
 
   const { decisions, isLoading: decisionsLoading } = useAllDecisions(activeSlugs);
   const actorsQuery = useActors();
-
   const isLoading =
     treesQuery.isLoading || decisionsLoading || actorsQuery.isLoading;
+
+  // ---- Drill state ----
+  const [drill, setDrill] = useState<{
+    title: string;
+    description?: string;
+    decisions: Decision[];
+  } | null>(null);
+  const openDrill = (
+    title: string,
+    list: Decision[],
+    description?: string,
+  ) => setDrill({ title, decisions: list, description });
+  const openDecision = useAppStore((s) => s.openDecision);
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
@@ -584,21 +781,35 @@ export function Dashboard() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <HeadlineMetric decisions={decisions} isLoading={isLoading} />
+        <HeadlineMetric
+          decisions={decisions}
+          isLoading={isLoading}
+          openDrill={openDrill}
+        />
         <AgentVsHumanCard
           decisions={decisions}
           actors={actorsQuery.data}
           isLoading={isLoading}
+          openDrill={openDrill}
         />
 
         <SummaryTiles
           decisions={decisions}
           treeCount={activeSlugs.length}
           isLoading={isLoading}
+          openDrill={openDrill}
         />
 
-        <StatusPie decisions={decisions} isLoading={isLoading} />
-        <PriorityBar decisions={decisions} isLoading={isLoading} />
+        <StatusPie
+          decisions={decisions}
+          isLoading={isLoading}
+          openDrill={openDrill}
+        />
+        <PriorityBar
+          decisions={decisions}
+          isLoading={isLoading}
+          openDrill={openDrill}
+        />
 
         <ActivityLine />
 
@@ -608,6 +819,18 @@ export function Dashboard() {
           isLoading={isLoading}
         />
       </div>
+
+      <DecisionListModal
+        isOpen={drill !== null}
+        onClose={() => setDrill(null)}
+        title={drill?.title ?? ""}
+        description={drill?.description}
+        decisions={drill?.decisions ?? []}
+        onSelect={(t, id) => {
+          setDrill(null);
+          openDecision(t, id);
+        }}
+      />
     </div>
   );
 }

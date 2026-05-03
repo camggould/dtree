@@ -28,11 +28,60 @@ import {
 } from "lucide-react";
 import { IdentitySelector } from "@/components/IdentitySelector";
 import { useAppStore } from "@/store/app";
-import { useTrees } from "@/api/query";
+import { useTrees, useDecisions } from "@/api/query";
 import { ROUTES } from "@/routes";
+import { humanStatus, statusColor } from "@/util/labels";
+import { Chip } from "@heroui/react";
 
 interface LayoutProps {
   children: React.ReactNode;
+}
+
+function RecentDecisionsList({ tree }: { tree: string | null }) {
+  const { data, isLoading } = useDecisions(tree ?? "");
+  const openDecision = useAppStore((s) => s.openDecision);
+  if (!tree) {
+    return (
+      <div className="flex items-center gap-2 text-xs text-default-400 p-2">
+        <Clock size={12} />
+        <span>Pick a tree to see decisions</span>
+      </div>
+    );
+  }
+  if (isLoading) {
+    return <div className="text-xs text-default-400 p-2">Loading…</div>;
+  }
+  const items = (data?.items ?? []).slice(0, 12);
+  if (items.length === 0) {
+    return <div className="text-xs text-default-400 p-2">No decisions yet</div>;
+  }
+  return (
+    <div className="flex flex-col gap-1">
+      {items.map((d) => (
+        <button
+          key={d.id}
+          type="button"
+          onClick={() => openDecision(tree, d.id)}
+          className="text-left hover:bg-default-100 rounded p-2 cursor-pointer w-full"
+        >
+          <div className="text-xs font-medium text-foreground line-clamp-2">
+            {d.summary}
+          </div>
+          <div className="mt-1 flex items-center gap-1.5">
+            <Chip
+              size="sm"
+              variant="flat"
+              color={statusColor(d.status)}
+              className="h-4 text-[10px]"
+            >
+              {humanStatus(d.status)}
+            </Chip>
+            <span className="text-[10px] text-default-400">{d.creator}</span>
+          </div>
+        </button>
+      ))}
+    </div>
+  );
 }
 
 export function Layout({ children }: LayoutProps) {
@@ -64,11 +113,16 @@ export function Layout({ children }: LayoutProps) {
   const treeForTabs = currentTree ?? lastTreeSlug;
   const viewTabs = treeForTabs
     ? [
-        { key: "tree", label: "Overview", href: ROUTES.tree(treeForTabs) },
+        { key: "graph", label: "Graph", href: ROUTES.tree(treeForTabs) },
         {
-          key: "decisions",
-          href: ROUTES.tree(treeForTabs),
-          label: "Decisions",
+          key: "kanban",
+          label: "Kanban",
+          href: `/trees/${treeForTabs}/kanban`,
+        },
+        {
+          key: "queue",
+          label: "Queues",
+          href: `/trees/${treeForTabs}/queue/quick-wins`,
         },
         {
           key: "audit",
@@ -206,12 +260,7 @@ export function Layout({ children }: LayoutProps) {
             </span>
           </div>
           <div className="flex-1 overflow-y-auto p-2">
-            <div className="flex flex-col gap-1">
-              <div className="flex items-center gap-2 text-xs text-default-400 p-2">
-                <Clock size={12} />
-                <span>No recent decisions</span>
-              </div>
-            </div>
+            <RecentDecisionsList tree={currentTree ?? lastTreeSlug} />
           </div>
         </aside>
 

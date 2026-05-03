@@ -31,6 +31,36 @@ export type ChipColor =
   | "warning"
   | "danger";
 
+/** Display labels for audit-event Action enum values. */
+export function humanAction(a: string): string {
+  switch (a) {
+    case "create": return "Created";
+    case "update": return "Updated";
+    case "delete": return "Deleted";
+    case "decide": return "Decided";
+    case "undecide": return "Undecided";
+    case "scope_out": return "Marked out of scope";
+    case "supersede": return "Superseded";
+    case "restore": return "Restored";
+    case "relate": return "Linked";
+    case "unrelate": return "Unlinked";
+    case "rename": return "Renamed";
+    case "external_edit": return "Externally edited";
+    case "external_create": return "Externally created";
+    case "external_delete": return "Externally deleted";
+    case "tree_create": return "Tree created";
+    case "tree_delete": return "Tree deleted";
+    case "tree_rename": return "Tree renamed";
+    case "tree_archive": return "Tree archived";
+    case "actor_add": return "Actor added";
+    case "actor_rename": return "Actor renamed";
+    case "actor_archive": return "Actor archived";
+    case "config_change": return "Config changed";
+    case "schema_migrate": return "Schema migrated";
+    default: return a;
+  }
+}
+
 export function statusColor(s: Status | string): ChipColor {
   switch (s) {
     case "proposed": return "primary";

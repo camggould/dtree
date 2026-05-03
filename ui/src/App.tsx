@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { HeroUIProvider } from "@heroui/react";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Route, Router, Switch } from "wouter";
@@ -5,6 +6,7 @@ import { queryClient } from "@/api/query";
 import { useAppStore } from "@/store/app";
 import { Layout } from "@/components/Layout";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { DecisionModal } from "@/components/DecisionModal";
 import { useAuditStream } from "@/api/sse";
 import GraphView from "@/views/GraphView";
 import { DecisionView } from "@/views/DecisionView";
@@ -34,6 +36,7 @@ function AppRoutes() {
 
   return (
     <Layout>
+      <GlobalDecisionModal />
       <ErrorBoundary>
       <Switch>
         <Route path="/" component={HomeView} />
@@ -53,6 +56,19 @@ function AppRoutes() {
   );
 }
 
+function GlobalDecisionModal() {
+  const dm = useAppStore((s) => s.decisionModal);
+  const close = useAppStore((s) => s.closeDecision);
+  return (
+    <DecisionModal
+      tree={dm?.tree ?? ""}
+      decisionId={dm?.id ?? null}
+      isOpen={dm !== null}
+      onClose={close}
+    />
+  );
+}
+
 function ThemeWrapper({ children }: { children: React.ReactNode }) {
   const theme = useAppStore((s) => s.theme);
   const resolved =
@@ -62,13 +78,19 @@ function ThemeWrapper({ children }: { children: React.ReactNode }) {
         : "light"
       : theme;
 
+  // Set the class on <html> so HeroUI Modals (portaled to document.body)
+  // and ReactFlow's CSS variables see it. Local div class isn't enough
+  // because portals escape the React tree.
+  useEffect(() => {
+    const root = document.documentElement;
+    root.classList.remove("light", "dark");
+    root.classList.add(resolved);
+    root.dataset.theme = resolved;
+    root.style.colorScheme = resolved;
+  }, [resolved]);
+
   return (
-    <div
-      data-theme={resolved}
-      className={`${resolved} text-foreground bg-background min-h-screen`}
-    >
-      {children}
-    </div>
+    <div className="text-foreground bg-background min-h-screen">{children}</div>
   );
 }
 

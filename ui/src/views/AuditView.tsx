@@ -1,17 +1,26 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useMemo } from "react";
 import {
   useReactTable,
   getCoreRowModel,
   flexRender,
   createColumnHelper,
 } from "@tanstack/react-table";
-import { Button, Input, Select, SelectItem, Chip, Tooltip, Spinner } from "@heroui/react";
+import {
+  Button,
+  Input,
+  Select,
+  SelectItem,
+  Chip,
+  Tooltip,
+  Spinner,
+} from "@heroui/react";
 import { useParams } from "wouter";
 import { formatDistanceToNow } from "date-fns";
-import { useAuditList } from "@/api/query";
+import { useAuditList, useActors } from "@/api/query";
 import { useAuditStream } from "@/api/sse";
-import type { Event as DtreeEvent, Action } from "@/api/types.gen";
-// DtreeEvent is used in createColumnHelper generic and liveEvents state below
+import { useAppStore } from "@/store/app";
+import { humanAction } from "@/util/labels";
+import type { Event as DtreeEvent, Action, Actor } from "@/api/types.gen";
 
 const ACTION_OPTIONS: Action[] = [
   "create", "update", "delete", "decide", "undecide", "scope_out",
@@ -22,7 +31,10 @@ const ACTION_OPTIONS: Action[] = [
   "config_change", "schema_migrate",
 ];
 
-const ACTION_COLOR_MAP: Record<string, "success" | "danger" | "warning" | "primary" | "default"> = {
+const ACTION_COLOR_MAP: Record<
+  string,
+  "success" | "danger" | "warning" | "primary" | "default"
+> = {
   create: "success",
   external_create: "success",
   tree_create: "success",
@@ -34,6 +46,7 @@ const ACTION_COLOR_MAP: Record<string, "success" | "danger" | "warning" | "prima
   undecide: "warning",
   scope_out: "warning",
   supersede: "warning",
+  restore: "success",
   update: "default",
   external_edit: "default",
   relate: "default",
@@ -44,8 +57,33 @@ function ActionChip({ action }: { action: string }) {
   const color = ACTION_COLOR_MAP[action] ?? "default";
   return (
     <Chip size="sm" color={color} variant="flat">
-      {action}
+      {humanAction(action)}
     </Chip>
+  );
+}
+
+function ActorCell({
+  actor,
+  actors,
+}: {
+  actor: string;
+  actors: Actor[] | undefined;
+}) {
+  const a = actors?.find((x) => x.handle === actor);
+  return (
+    <div className="flex items-center gap-1.5">
+      <span className="text-sm font-medium">{actor}</span>
+      {a && (
+        <Chip
+          size="sm"
+          variant="flat"
+          color={a.kind === "agent" ? "secondary" : "primary"}
+          className="h-4 text-[10px]"
+        >
+          {a.kind}
+        </Chip>
+      )}
+    </div>
   );
 }
 
@@ -61,98 +99,106 @@ function RelativeTime({ ts }: { ts: string }) {
 
 const columnHelper = createColumnHelper<DtreeEvent>();
 
-const columns = [
-  columnHelper.accessor("ts", {
-    header: "Time",
-    cell: (info) => <RelativeTime ts={info.getValue()} />,
-  }),
-  columnHelper.accessor("actor", {
-    header: "Actor",
-    cell: (info) => <span className="text-sm font-mono">{info.getValue()}</span>,
-  }),
-  columnHelper.accessor("action", {
-    header: "Action",
-    cell: (info) => <ActionChip action={info.getValue()} />,
-  }),
-  columnHelper.accessor("kind", {
-    header: "Kind",
-    cell: (info) => <span className="text-sm text-default-600">{info.getValue()}</span>,
-  }),
-  columnHelper.accessor("id", {
-    header: "Ref",
-    cell: (info) => (
-      <span className="text-sm font-mono text-default-500">{info.getValue().slice(0, 8)}</span>
-    ),
-  }),
-  columnHelper.accessor(
-    (row) => {
-      const after = row.payload?.after as Record<string, unknown> | undefined;
-      return (after?.summary as string) ?? (after?.name as string) ?? row.id;
-    },
-    {
-      id: "summary",
-      header: "Summary",
+function buildColumns(actors: Actor[] | undefined) {
+  return [
+    columnHelper.accessor("ts", {
+      header: "Time",
+      cell: (info) => <RelativeTime ts={info.getValue()} />,
+    }),
+    columnHelper.accessor("actor", {
+      header: "Actor",
+      cell: (info) => <ActorCell actor={info.getValue()} actors={actors} />,
+    }),
+    columnHelper.accessor("action", {
+      header: "Action",
+      cell: (info) => <ActionChip action={info.getValue()} />,
+    }),
+    columnHelper.accessor("kind", {
+      header: "Kind",
       cell: (info) => (
-        <span className="text-sm truncate max-w-xs block">{info.getValue()}</span>
+        <span className="text-sm text-default-600">{info.getValue()}</span>
       ),
-    },
-  ),
-];
+    }),
+    columnHelper.accessor("id", {
+      header: "Ref",
+      cell: (info) => (
+        <span className="text-sm font-mono text-default-500">
+          {info.getValue().slice(0, 8)}
+        </span>
+      ),
+    }),
+    columnHelper.accessor(
+      (row) => {
+        const after = row.payload?.after as Record<string, unknown> | undefined;
+        return (after?.summary as string) ?? (after?.name as string) ?? row.id;
+      },
+      {
+        id: "summary",
+        header: "Summary",
+        cell: (info) => (
+          <span className="text-sm truncate max-w-xs block">
+            {info.getValue()}
+          </span>
+        ),
+      },
+    ),
+  ];
+}
 
 export function AuditView() {
   const params = useParams<{ tree: string }>();
   const tree = params.tree ?? "";
+  const openDecision = useAppStore((s) => s.openDecision);
+  const actorsQuery = useActors();
 
   const [actionFilter, setActionFilter] = useState("");
   const [actorFilter, setActorFilter] = useState("");
   const [sinceFilter, setSinceFilter] = useState("");
   const [liveTail, setLiveTail] = useState(false);
-  const [liveEvents, setLiveEvents] = useState<DtreeEvent[]>([]);
+  const [liveEvents] = useState<DtreeEvent[]>([]);
   const [cursor, setCursor] = useState<string | undefined>(undefined);
   const [allItems, setAllItems] = useState<DtreeEvent[]>([]);
   const initialLoadDone = useRef(false);
 
+  const sinceISO =
+    sinceFilter && sinceFilter.length === 10
+      ? `${sinceFilter}T00:00:00Z`
+      : sinceFilter;
+
   const filters = {
     ...(actionFilter ? { action: actionFilter } : {}),
     ...(actorFilter ? { actor: actorFilter } : {}),
-    ...(sinceFilter ? { since: sinceFilter } : {}),
+    ...(sinceISO ? { since: sinceISO } : {}),
     ...(cursor ? { cursor } : {}),
   };
 
   const { data, isLoading, isFetching } = useAuditList(tree, filters);
 
-  // Merge server data into allItems on first load or filter change
   const serverItems = data?.items ?? [];
   const nextCursor = data?.next_cursor;
 
-  // When filters change, reset
   const handleFilterChange = useCallback(() => {
     setCursor(undefined);
     setAllItems([]);
     initialLoadDone.current = false;
   }, []);
 
-  // Accumulate pages
   if (data && !isFetching) {
     if (!initialLoadDone.current && cursor === undefined) {
       initialLoadDone.current = true;
-      if (allItems.length === 0) {
-        setAllItems(serverItems);
-      }
+      if (allItems.length === 0) setAllItems(serverItems);
     }
   }
 
-  // useAuditStream handles cache invalidation; liveEvents are populated via
-  // query re-fetches triggered by the stream. For visual prepend we rely on
-  // the global stream in App — this local stream just enables per-tree filtering.
   useAuditStream({ tree, enabled: liveTail });
 
-  // Combine: live-tail events prepended, then allItems from server
   const displayItems = liveTail
     ? [...liveEvents, ...allItems]
     : allItems.length > 0
       ? allItems
       : serverItems;
+
+  const columns = useMemo(() => buildColumns(actorsQuery.data), [actorsQuery.data]);
 
   const table = useReactTable({
     data: displayItems,
@@ -165,7 +211,7 @@ export function AuditView() {
     if (nextCursor) {
       setCursor(nextCursor);
       if (data?.items) {
-        setAllItems((prev) => [...prev, ...(data.items)]);
+        setAllItems((prev) => [...prev, ...data.items]);
       }
     }
   };
@@ -173,36 +219,32 @@ export function AuditView() {
   return (
     <div className="p-6 space-y-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Audit Log</h1>
+        <h1 className="text-2xl font-bold">Audit log</h1>
         <Button
           size="sm"
           color={liveTail ? "success" : "default"}
           variant={liveTail ? "solid" : "bordered"}
-          onPress={() => {
-            if (!liveTail) setLiveEvents([]);
-            setLiveTail((v) => !v);
-          }}
+          onPress={() => setLiveTail((v) => !v)}
         >
           {liveTail ? "Live tail ON" : "Live tail OFF"}
         </Button>
       </div>
 
-      {/* Filters */}
       <div className="flex flex-wrap gap-3 items-end">
         <Select
           label="Action"
           placeholder="All actions"
           size="sm"
-          className="w-48"
+          className="w-56"
           selectedKeys={actionFilter ? new Set([actionFilter]) : new Set()}
           onSelectionChange={(keys) => {
-            const val = Array.from(keys)[0] as string ?? "";
+            const val = (Array.from(keys)[0] as string) ?? "";
             setActionFilter(val);
             handleFilterChange();
           }}
         >
           {ACTION_OPTIONS.map((a) => (
-            <SelectItem key={a}>{a}</SelectItem>
+            <SelectItem key={a}>{humanAction(a)}</SelectItem>
           ))}
         </Select>
         <Input
@@ -243,7 +285,6 @@ export function AuditView() {
         )}
       </div>
 
-      {/* Table */}
       {isLoading ? (
         <div className="flex justify-center py-12">
           <Spinner size="lg" />
@@ -259,7 +300,10 @@ export function AuditView() {
                       key={header.id}
                       className="px-4 py-3 text-sm font-semibold text-default-600 whitespace-nowrap"
                     >
-                      {flexRender(header.column.columnDef.header, header.getContext())}
+                      {flexRender(
+                        header.column.columnDef.header,
+                        header.getContext(),
+                      )}
                     </th>
                   ))}
                 </tr>
@@ -268,30 +312,47 @@ export function AuditView() {
             <tbody>
               {table.getRowModel().rows.length === 0 ? (
                 <tr>
-                  <td colSpan={columns.length} className="px-4 py-8 text-center text-default-400">
+                  <td
+                    colSpan={columns.length}
+                    className="px-4 py-8 text-center text-default-400"
+                  >
                     No audit events found.
                   </td>
                 </tr>
               ) : (
-                table.getRowModel().rows.map((row) => (
-                  <tr
-                    key={row.id}
-                    className="border-t border-divider hover:bg-default-50 transition-colors"
-                  >
-                    {row.getVisibleCells().map((cell) => (
-                      <td key={cell.id} className="px-4 py-3">
-                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                      </td>
-                    ))}
-                  </tr>
-                ))
+                table.getRowModel().rows.map((row) => {
+                  const ev = row.original;
+                  const clickable =
+                    ev.kind === "decision" && Boolean(ev.tree) && Boolean(ev.id);
+                  return (
+                    <tr
+                      key={row.id}
+                      onClick={() => {
+                        if (clickable) openDecision(ev.tree as string, ev.id);
+                      }}
+                      className={`border-t border-divider transition-colors ${
+                        clickable
+                          ? "hover:bg-default-100 cursor-pointer"
+                          : ""
+                      }`}
+                    >
+                      {row.getVisibleCells().map((cell) => (
+                        <td key={cell.id} className="px-4 py-3">
+                          {flexRender(
+                            cell.column.columnDef.cell,
+                            cell.getContext(),
+                          )}
+                        </td>
+                      ))}
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
         </div>
       )}
 
-      {/* Load more */}
       {nextCursor && !liveTail && (
         <div className="flex justify-center pt-2">
           <Button
