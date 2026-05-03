@@ -36,6 +36,8 @@ export const keys = {
     ["trees", tree, "decisions", id] as const,
   metrics: (tree: string) => ["trees", tree, "metrics"] as const,
   audit: (tree?: string) => ["audit", tree ?? "all"] as const,
+  history: (tree: string, id: string) =>
+    ["trees", tree, "decisions", id, "history"] as const,
   actors: () => ["actors"] as const,
   health: () => ["health"] as const,
   history: (tree: string, id: string) => ["history", tree, id] as const,
@@ -81,6 +83,22 @@ export function useDecision(
         `/v1/trees/${tree}/decisions/${id}`,
       );
       return data;
+    },
+    enabled: Boolean(tree) && Boolean(id),
+  });
+}
+
+export function useHistory(
+  tree: string,
+  id: string,
+): UseQueryResult<Event[]> {
+  return useQuery({
+    queryKey: keys.history(tree, id),
+    queryFn: async () => {
+      const { data } = await apiFetch<{ events: Event[] }>(
+        `/v1/trees/${tree}/decisions/${id}/history`,
+      );
+      return data.events;
     },
     enabled: Boolean(tree) && Boolean(id),
   });

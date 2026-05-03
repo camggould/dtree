@@ -6,6 +6,7 @@ import { useAppStore } from "@/store/app";
 import { Layout } from "@/components/Layout";
 import { useAuditStream } from "@/api/sse";
 import GraphView from "@/views/GraphView";
+import { DecisionView } from "@/views/DecisionView";
 import "@/styles/globals.css";
 
 // Stub views
@@ -14,9 +15,6 @@ function HomeView() {
 }
 function TreeView() {
   return <GraphView />;
-}
-function DecisionView() {
-  return <div>Not implemented: DecisionView</div>;
 }
 function QueueView() {
   return <div>Not implemented: QueueView</div>;
