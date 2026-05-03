@@ -54,6 +54,11 @@ func New(cfg Config) *http.Server {
 		cfg.Version = "dev"
 	}
 
+	// shutdownCh is closed when the server begins to shut down. The SSE
+	// audit-stream handler watches it so long-poll connections drain
+	// instead of holding http.Server.Shutdown open.
+	shutdownCh := make(chan struct{})
+
 	r := chi.NewRouter()
 
 	// Core middleware stack.
@@ -73,8 +78,9 @@ func New(cfg Config) *http.Server {
 		mountQueues(r, cfg)
 		mountMetrics(r, cfg)
 
-		// Audit endpoints.
-		ah := newAuditHandlers(cfg.RepoRoot)
+		// Audit endpoints. shutdownCh is closed below via RegisterOnShutdown
+		// so the SSE stream handler exits immediately on graceful shutdown.
+		ah := newAuditHandlers(cfg.RepoRoot, shutdownCh)
 		mountAuditRoutes(r, ah)
 	})
 
@@ -93,8 +99,14 @@ func New(cfg Config) *http.Server {
 		WriteProblem(w, r, NotFound("the requested endpoint does not exist"))
 	})
 
-	return &http.Server{
+	srv := &http.Server{
 		Addr:    cfg.Listen,
 		Handler: r,
 	}
+	// Broadcast shutdown to long-poll handlers (SSE) the moment Shutdown
+	// is invoked, so they exit and Shutdown can return promptly.
+	srv.RegisterOnShutdown(func() {
+		close(shutdownCh)
+	})
+	return srv
 }

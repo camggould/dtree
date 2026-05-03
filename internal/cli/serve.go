@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -104,7 +105,15 @@ func newServeCommand() *cobra.Command {
 			select {
 			case <-ctx.Done():
 				fmt.Fprintln(cmd.OutOrStdout(), "\nShutting down...")
-				_ = srv.Shutdown(context.Background())
+				// Bounded grace period: long-poll handlers (SSE) get a
+				// shutdown signal via RegisterOnShutdown and exit cleanly,
+				// but if anything is wedged we don't want to hang forever.
+				// 5s is comfortably more than the SSE ticker (500ms).
+				shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				if err := srv.Shutdown(shutCtx); err != nil {
+					_ = srv.Close()
+				}
 				return <-errCh
 			case err := <-errCh:
 				return err

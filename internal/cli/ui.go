@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -90,7 +91,14 @@ func newUICommand() *cobra.Command {
 			select {
 			case <-ctx.Done():
 				fmt.Fprintln(cmd.OutOrStdout(), "\nShutting down...")
-				_ = srv.Shutdown(context.Background())
+				// 5s grace; long-poll handlers (SSE) get an explicit
+				// shutdown signal from server.New so they exit promptly.
+				// The Close() fallback covers anything wedged.
+				shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				if err := srv.Shutdown(shutCtx); err != nil {
+					_ = srv.Close()
+				}
 				return <-errCh
 			case err := <-errCh:
 				return err

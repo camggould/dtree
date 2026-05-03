@@ -24,13 +24,21 @@ type auditListResponse struct {
 }
 
 // auditHandlers bundles handlers that share the repoRoot dependency.
+//
+// shutdown is an optional broadcast channel closed by the server when it
+// begins to shut down. The SSE stream handler watches it so long-poll
+// connections drain immediately on Ctrl-C instead of holding Shutdown
+// open until the client gives up. nil means no shutdown signal (tests
+// and callers that don't care).
 type auditHandlers struct {
 	repoRoot string
+	shutdown <-chan struct{}
 }
 
 // newAuditHandlers constructs an auditHandlers for the given repo root.
-func newAuditHandlers(repoRoot string) *auditHandlers {
-	return &auditHandlers{repoRoot: repoRoot}
+// shutdown may be nil in tests.
+func newAuditHandlers(repoRoot string, shutdown <-chan struct{}) *auditHandlers {
+	return &auditHandlers{repoRoot: repoRoot, shutdown: shutdown}
 }
 
 // parseRelativeDuration parses a relative duration string like "7d", "24h", "30m"
@@ -233,6 +241,12 @@ func (h *auditHandlers) auditStream(w http.ResponseWriter, r *http.Request) {
 	for {
 		select {
 		case <-ctx.Done():
+			return
+		case <-h.shutdown:
+			// Server is shutting down; drain immediately so http.Shutdown
+			// doesn't block on this long-poll connection. http.Server.Shutdown
+			// does NOT cancel r.Context(), so without this, Ctrl-C would
+			// hang for many minutes waiting for the client to disconnect.
 			return
 		case <-ticker.C:
 			events, err := audit.Read(h.repoRoot, audit.Filter{})
