@@ -32,7 +32,14 @@ import {
   useRestore,
 } from "@/api/mutations";
 import { useAppStore } from "@/store/app";
-import { humanStatus, statusColor, humanPriority, humanAction } from "@/util/labels";
+import {
+  humanStatus,
+  statusColor,
+  humanPriority,
+  humanAction,
+  decisionDescription,
+  truncate,
+} from "@/util/labels";
 import { formatDistanceToNow } from "date-fns";
 import AuditFlow from "@/components/AuditFlow";
 
@@ -163,17 +170,46 @@ function OverviewTab({
   handle: string | null;
   recExists: boolean;
 }) {
+  const body = decisionDescription(decision);
   return (
     <div className="flex flex-col gap-4 py-2">
-      {decision.description && (
-        <section>
-          <SectionLabel>Description</SectionLabel>
-          <p className="text-sm whitespace-pre-wrap">{decision.description}</p>
-        </section>
-      )}
+      <section>
+        <SectionLabel>Description</SectionLabel>
+        {body ? (
+          <p className="text-sm leading-relaxed whitespace-pre-wrap">{body}</p>
+        ) : (
+          <p className="text-xs italic text-default-400">
+            No description provided. The decision needs context — what's the
+            question, what are the options, what are the constraints?
+          </p>
+        )}
+      </section>
 
       {recExists && (
         <RecommendationBlock decision={decision} handle={handle} />
+      )}
+
+      {decision.status === "out_of_scope" && (
+        <section>
+          <SectionLabel>Out-of-scope reason</SectionLabel>
+          <Card className="bg-default-100 dark:bg-default-50/50 border border-default-300 dark:border-default-200">
+            <CardBody>
+              {decision.out_of_scope_reason ? (
+                <p className="text-sm whitespace-pre-wrap text-foreground">
+                  {decision.out_of_scope_reason}
+                </p>
+              ) : (
+                <p className="text-xs italic text-default-400">
+                  Marked out of scope without a stated reason.
+                </p>
+              )}
+            </CardBody>
+          </Card>
+        </section>
+      )}
+
+      {decision.status === "superseded" && (
+        <SupersededBlock decision={decision} />
       )}
 
       {decision.status === "decided" && decision.actual_choice && (
@@ -227,6 +263,43 @@ function OverviewTab({
         />
       )}
     </div>
+  );
+}
+
+function SupersededBlock({
+  decision,
+}: {
+  decision: import("@/api/types.gen").Decision;
+}) {
+  const pushDecision = useAppStore((s) => s.pushDecision);
+  // Find the supersedes target (the new decision that replaces this one).
+  const target = (decision.relationships ?? []).find(
+    (r) => r.type === "supersedes",
+  );
+  return (
+    <section>
+      <SectionLabel>Superseded by</SectionLabel>
+      <Card className="bg-warning-50 dark:bg-warning-950 border border-warning-300 dark:border-warning-700">
+        <CardBody className="gap-2">
+          {target ? (
+            <button
+              type="button"
+              onClick={() => pushDecision(decision.tree, target.target)}
+              className="text-left text-foreground hover:text-warning"
+            >
+              <span className="font-mono text-xs text-default-500">
+                {target.target.slice(0, 8)}
+              </span>
+              <span className="ml-2 text-sm">→ click to open replacement</span>
+            </button>
+          ) : (
+            <p className="text-xs italic text-default-400">
+              Marked superseded but no replacement is linked.
+            </p>
+          )}
+        </CardBody>
+      </Card>
+    </section>
   );
 }
 
@@ -377,6 +450,10 @@ function RecommendationBlock({
 
 // ---- History tab --------------------------------------------------------
 
+// Cap for inline reasoning quotes in history/audit-flow nodes. Longer text
+// is truncated with an ellipsis; the full text is on the decision itself.
+const REASON_CAP = 240;
+
 function HistoryTab({
   tree,
   id,
@@ -392,11 +469,12 @@ function HistoryTab({
   if (list.length === 0)
     return <p className="text-default-500 text-sm py-4">No events</p>;
   return (
-    <div className="flex flex-col gap-2 py-2">
+    <div className="flex flex-col gap-3 py-2">
       {list.map((e) => {
         const after = (e.payload?.after ?? {}) as Record<string, unknown>;
         const before = (e.payload?.before ?? {}) as Record<string, unknown>;
         const summary = describeEvent(e.action, after, before, decision);
+        const reason = describeReason(e.action, after, decision);
         return (
           <div
             key={e.event_id}
@@ -409,9 +487,14 @@ function HistoryTab({
               <div className="text-foreground">
                 <span className="font-medium">{e.actor}</span>
                 {summary && (
-                  <span className="text-foreground/70"> — {summary}</span>
+                  <span className="text-foreground/80"> — {summary}</span>
                 )}
               </div>
+              {reason && (
+                <div className="mt-1 text-xs text-foreground/65 italic border-l border-default-200 pl-2">
+                  “{truncate(reason, REASON_CAP)}”
+                </div>
+              )}
               <div className="text-xs text-default-500 mt-0.5">
                 {formatDistanceToNow(new Date(e.ts))} ago
               </div>
@@ -421,6 +504,31 @@ function HistoryTab({
       })}
     </div>
   );
+}
+
+/** Pull the user-supplied reason text out of an event payload, falling back
+ *  to whatever's on the parent decision when the event only carries a diff. */
+function describeReason(
+  action: string,
+  after: Record<string, unknown>,
+  decision: import("@/api/types.gen").Decision,
+): string | null {
+  if (action === "decide") {
+    return (
+      (after.actual_choice_reason as string | undefined) ??
+      decision.actual_choice_reason ??
+      null
+    );
+  }
+  if (action === "scope_out") {
+    return (
+      (after.scope_out_reason as string | undefined) ??
+      (after.reason as string | undefined) ??
+      decision.out_of_scope_reason ??
+      null
+    );
+  }
+  return null;
 }
 
 /** Build a one-line plain-language summary for an audit event's payload.

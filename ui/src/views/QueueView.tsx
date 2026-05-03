@@ -32,6 +32,7 @@ import {
   humanPriority,
   humanStatus,
   statusColor,
+  decisionDescription,
 } from "@/util/labels";
 import type { Decision, QueueItem, Priority } from "@/api/types.gen";
 
@@ -302,20 +303,23 @@ function QueueCard({
       </CardHeader>
 
       <CardBody className="gap-5 px-6 pb-5">
-        {decision.description ? (
-          <div>
-            <div className="text-[11px] font-semibold uppercase tracking-wider text-default-500 mb-1.5">
-              Context
+        {(() => {
+          const body = decisionDescription(decision);
+          return body ? (
+            <div>
+              <div className="text-[11px] font-semibold uppercase tracking-wider text-default-500 mb-1.5">
+                Context
+              </div>
+              <p className="text-sm leading-relaxed text-foreground/90 whitespace-pre-wrap">
+                {body}
+              </p>
             </div>
-            <p className="text-sm leading-relaxed text-foreground/90 whitespace-pre-wrap">
-              {decision.description}
+          ) : (
+            <p className="text-xs italic text-default-400">
+              No description on this decision yet.
             </p>
-          </div>
-        ) : (
-          <p className="text-xs italic text-default-400">
-            No description on this decision yet.
-          </p>
-        )}
+          );
+        })()}
 
         {recExists && (
           <Card className="bg-primary-50 dark:bg-primary-950 border border-primary-300 dark:border-primary-700">

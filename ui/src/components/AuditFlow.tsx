@@ -13,7 +13,7 @@ import { Chip, Spinner } from "@heroui/react";
 import { formatDistanceToNow } from "date-fns";
 import { useHistory, useActors } from "@/api/query";
 import { useAppStore } from "@/store/app";
-import { humanAction } from "@/util/labels";
+import { humanAction, truncate } from "@/util/labels";
 import type { Event, Action, Decision, Actor } from "@/api/types.gen";
 import "@xyflow/react/dist/style.css";
 
@@ -108,6 +108,9 @@ const HANDLE_STYLE: CSSProperties = {
   opacity: 0,
 };
 
+// Cap for inline reasoning quotes in audit-flow nodes.
+const REASON_CAP = 200;
+
 function describePayload(
   ev: Event,
   decision?: Decision | null,
@@ -120,7 +123,7 @@ function describePayload(
     const isRec = after.is_recommended as boolean | undefined;
     const recAfter = after.recommended_summary as string | undefined;
     const recommended = recAfter ?? decision?.recommended_summary;
-    const reason =
+    const reasonRaw =
       (after.actual_choice_reason as string | undefined) ??
       decision?.actual_choice_reason ??
       null;
@@ -132,14 +135,21 @@ function describePayload(
     } else {
       head = `Decided: “${choice}”`;
     }
-    return { primary: head, secondary: reason };
+    return {
+      primary: head,
+      secondary: reasonRaw ? `“${truncate(reasonRaw, REASON_CAP)}”` : null,
+    };
   }
   if (ev.action === "scope_out") {
     const reason =
       (after.scope_out_reason as string | undefined) ??
       (after.reason as string | undefined) ??
+      decision?.out_of_scope_reason ??
       null;
-    return { primary: "Marked out of scope", secondary: reason };
+    return {
+      primary: "Marked out of scope",
+      secondary: reason ? `“${truncate(reason, REASON_CAP)}”` : null,
+    };
   }
   if (ev.action === "supersede") {
     const by = after.superseded_by as string | undefined;

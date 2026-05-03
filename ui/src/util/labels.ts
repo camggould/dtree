@@ -1,6 +1,20 @@
 // Display-friendly versions of enum values.
 
-import type { Status, Priority } from "@/api/types.gen";
+import type { Status, Priority, Decision } from "@/api/types.gen";
+
+/** Long-form decision body. The Go schema serialises this as
+ *  `decision_full_description` for historical reasons; this helper
+ *  centralises the lookup and falls back to plain `description` if
+ *  a future API version normalises the name. */
+export function decisionDescription(d: Decision): string {
+  return d.decision_full_description ?? d.description ?? "";
+}
+
+/** Truncate text and append an ellipsis. Whitespace-aware. */
+export function truncate(s: string, max: number): string {
+  if (s.length <= max) return s;
+  return s.slice(0, max).trimEnd() + "…";
+}
 
 export function humanStatus(s: Status | string): string {
   switch (s) {
