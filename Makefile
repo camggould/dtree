@@ -15,8 +15,16 @@ help:  ## Show this help.
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
 
 .PHONY: setup
-setup:  ## Install Go dependencies.
+setup:  ## Install Go and UI dependencies; regenerate TS types.
 	go mod download
+	cd ui && npm install
+	$(MAKE) ui-types
+
+.PHONY: dev
+dev:  ## Build UI then run the API server with the embedded build.
+	$(MAKE) ui
+	$(MAKE) build
+	./dtree serve
 
 # sqlite_fts5 enables FTS5 full-text search in the bundled SQLite amalgamation.
 # It also requires libm for the BM25 ranking function (-lm is handled by
@@ -50,8 +58,8 @@ ui:  ## Build the UI (produces internal/uifs/dist/).
 ui-dev:  ## Start the UI dev server with HMR.
 	cd ui && npm run dev
 
-.PHONY: ui-types
-ui-types:  ## Regenerate TypeScript types from Go core types.
+.PHONY: ui-types api
+ui-types api:  ## Regenerate TypeScript types from Go core types.
 	tygo generate
 
 .PHONY: clean

@@ -2,13 +2,13 @@
 
 > A directory-based persistence layer for building, recording, and auditing decisions.
 
-[![Status: alpha](https://img.shields.io/badge/status-alpha-orange.svg)](#status)
+[![Status: beta](https://img.shields.io/badge/status-beta-blue.svg)](#status)
 
-`dtree` lets engineering teams record decisions as plain YAML files in a directory structure, track relationships between them (blocks, influences, supersedes), maintain a complete audit log, and surface the result through a CLI, a local web UI, and an MCP server for AI agents.
+`dtree` lets engineering teams record decisions as plain YAML files in a directory tree, track typed relationships between them (`blocks`, `influences`, `supersedes`, `relates_to`), maintain an append-only audit log, and surface the result through a CLI, a local web UI, and an MCP server for AI agents.
 
 ## Status
 
-**Alpha — in active development.** The design is settled (see PRD), implementation is underway. APIs and storage formats may shift before v1.0.
+**Beta — feature-complete for v1.** The data model and storage formats are stable. Server and CLI surface are stable. UI is functional and being polished.
 
 ## What is dtree?
 
@@ -16,10 +16,10 @@ Most teams scatter decision-making across Slack threads, ad-hoc docs, and engine
 
 `dtree` makes decisions a first-class artifact:
 
-- **Directory-based.** Each "decision tree" is a directory under `.decisions/`. Each decision is a YAML file. Plain text, version-controlled by your existing git workflow.
-- **Auditable.** Every mutation (create, update, decide, scope-out, supersede) is recorded in an append-only JSONL audit log. Replay state at any point in time.
-- **Relational.** Decisions can `block`, `influence`, `supersede`, or `relate_to` other decisions. Visualize as a DAG.
-- **Multi-identity.** Track who created, who decided, who recommended. Distinguish humans from AI agents. Measure how often agent recommendations get accepted.
+- **Directory-based.** Each decision tree is a subdirectory under `.decisions/`. Each decision is a YAML file. Plain text, version-controlled by your existing git workflow.
+- **Auditable.** Every mutation (create, update, decide, scope-out, supersede, relate) is recorded in an append-only JSONL audit log, monthly-partitioned. Replay state at any point in time.
+- **Relational.** Decisions form a typed graph. The web UI lays the graph out with [ELK](https://www.eclipse.org/elk/) (collision-aware orthogonal routing) so you can see at a glance what blocks what.
+- **Multi-identity.** Track who created, who decided, who recommended. Distinguish humans from AI agents. Measure how often agent recommendations get accepted vs overridden.
 - **CLI, web UI, and MCP.** Use `dtree` from the terminal, browse decisions in a polished local web UI (`dtree ui`), or expose tools to AI agents (`dtree mcp`).
 
 ## Installation
@@ -29,24 +29,21 @@ Most teams scatter decision-making across Slack threads, ad-hoc docs, and engine
 ```sh
 git clone https://github.com/cgould/dtree.git
 cd dtree
-make build
+make setup    # installs Go + npm deps and regenerates TS types
+make ui       # builds the embedded web UI
+make build    # produces ./dtree (single binary, UI baked in)
 sudo install -m 0755 dtree /usr/local/bin/dtree
 ```
 
 ### Via `go install`
 
 ```sh
-go install github.com/cgould/dtree/cmd/dtree@latest
+go install -tags sqlite_fts5 github.com/cgould/dtree/cmd/dtree@latest
 ```
 
-### Pre-built binary (when releases are available)
+The `sqlite_fts5` build tag is required for full-text search to compile in.
 
-```sh
-curl -L https://github.com/cgould/dtree/releases/latest/download/dtree-$(uname -s)-$(uname -m) -o /usr/local/bin/dtree
-chmod +x /usr/local/bin/dtree
-```
-
-Verify:
+### Verify
 
 ```sh
 dtree version
@@ -55,53 +52,63 @@ dtree version
 ## Quickstart
 
 ```sh
-# 1. One-time machine setup (first run)
+# 1. One-time machine setup
 dtree config set --global identity.default cam
 
-# 2. In your project repo
-dtree init                                    # creates .decisions/
-dtree tree create backend                     # create a decision tree
-dtree actor add cam --name "Cam" --email cam@example.com
+# 2. In your project repo (init is interactive by default; --non-interactive
+#    + flags is the script-friendly form)
+dtree init                                   # creates .decisions/ + registers your identity
+# dtree init --non-interactive --actor-handle cam --actor-name "Cam" \
+#   --actor-email cam@example.com --first-tree backend
+dtree tree create backend --title "Backend Architecture"
+dtree actor add alice --name "Alice" --email alice@example.com
 
-# 3. Create a decision (opens $EDITOR with a template)
-dtree new "Pick database engine" --tree backend
+# 3. Create a decision (opens $EDITOR with a YAML template)
+dtree new "Pick database engine" --tree backend --priority high
 
-# 4. List proposed decisions
+# 4. Find proposed decisions
 dtree ls --status proposed
 
-# 5. Decide it
-dtree decide 01HXKQ5Z --by cam --choice "SQLite + FTS5" \
-  --reason "Single-binary requirement; FTS fits."
+# 5. Decide it (id-prefix is fine; 4+ chars unambiguous)
+dtree decide 01HX --by cam --choice "SQLite + FTS5" \
+  --reason "Single-binary requirement; FTS5 ships built-in."
 
-# 6. Open the web UI
-dtree ui
+# 6. Browse in the web UI
+dtree ui                                     # opens browser to the local server
 
-# 7. Expose MCP tools to your AI assistant
-dtree mcp --as cam-claude
+# 7. Expose decision tools to your AI assistant
+dtree mcp --as cam                           # stdio transport for MCP clients
 ```
 
 ## Concepts
 
 ### Decision tree
 
-A named collection of decisions. Stored as a subdirectory under `.decisions/`. Most projects have one or two trees; teams with multiple workstreams may have more.
+A named collection of decisions. Stored as a subdirectory under `.decisions/<slug>/`. Most projects have one or two trees; teams with multiple workstreams may have more.
 
 ### Decision
 
-A YAML file capturing a single decision. Required: a summary, priority, status. Optional: recommendation, outcome, relationships, tags.
+A YAML file capturing a single decision. Required: `summary`, `priority`, `status`. Optional: recommendation, outcome, relationships, tags, free-form description (in `decision_full_description`).
 
 ```yaml
 id: 01HXKQ5Z3PCWJ8FQR4M2TVB7D9
+slug: pick-database-engine
+schema_version: 1
 summary: Pick database engine
 priority: high
 status: decided
 creator: cam
 recommended_summary: SQLite + FTS5
+recommended_full: |
+  Single-binary requirement is non-negotiable. SQLite ships FTS5
+  out-of-the-box and Litestream covers the backup story.
 recommended_by: cam-claude
 actual_choice: SQLite + FTS5
-actual_choice_reason: Single-binary requirement is non-negotiable.
+actual_choice_reason: Approved as recommended.
 decided_by: [cam, alice]
 is_recommended: true
+decision_full_description: |
+  Long-form context, options, constraints, etc.
 relationships:
   - type: blocks
     target: 01HXKQ7N9MR4VXBPDTYFW2K8H1
@@ -109,7 +116,7 @@ relationships:
 
 ### Status
 
-| | Meaning |
+|   | Meaning |
 |---|---|
 | `proposed` | Default after creation; not yet decided |
 | `decided` | An `actual_choice` has been recorded |
@@ -120,16 +127,16 @@ relationships:
 
 `assumption` · `low` · `medium` · `high` · `critical`
 
-`assumption` is a low-ceremony "we're going to take this as given" — recorded but excluded from action queues.
+`assumption` is special — a low-ceremony "we're going to take this as given" that lands as `decided` on creation via `dtree assume`. It's recorded but excluded from action queues and rendered with its own visual treatment in the UI.
 
 ### Relationship types
 
-| | Meaning |
+|   | Meaning |
 |---|---|
-| `blocks` | Target cannot be decided until source is in a terminal state |
-| `influences` | Source informs target's outcome |
+| `blocks` | Target cannot be acted on until source is in a terminal state |
+| `influences` | Source informs target's outcome (no hard constraint) |
 | `supersedes` | Source replaces target (drives target → `superseded`) |
-| `relates_to` | Weak relatedness, no constraint |
+| `relates_to` | Weak relatedness, no constraint, decoration only |
 
 ### Identity
 
@@ -141,7 +148,7 @@ Every action is attributed to a *handle* — a stable, registered identity. Hand
 
 ```sh
 dtree init                          # creates .decisions/ and prompts to register your identity
-dtree tree create <name>            # create your first decision tree
+dtree tree create <slug> --title "Display name"
 ```
 
 ### Create decisions
@@ -151,7 +158,8 @@ dtree new "Summary"                                       # opens $EDITOR with a
 dtree new "Summary" --priority high --tag storage         # inline flags
 dtree new "Summary" --from-file draft.yaml                # full YAML body
 echo '...' | dtree new "Summary" --from-stdin             # via stdin
-dtree assume "Users have stable IDs"                      # shortcut for assumption-priority
+dtree assume "Users have stable IDs" \
+  --choice "ULID" --reason "Compact; lexicographically sortable."
 ```
 
 ### View decisions
@@ -160,18 +168,19 @@ dtree assume "Users have stable IDs"                      # shortcut for assumpt
 dtree ls                                  # default: proposed + decided
 dtree ls --status proposed --priority high,critical
 dtree ls --tag storage --since 30d
-dtree show <id>                           # full decision
+dtree show <id>                           # full decision (id-prefix or summary substring)
 dtree find "database"                     # FTS5 search
 ```
 
-### Decide
+### Lifecycle actions
 
 ```sh
 dtree decide <id> --choice "..." --reason "..." --by cam
 dtree decide <id> --by cam --by alice --is-recommended    # accept the recommendation
 dtree undecide <id>                                       # back to proposed
 dtree scope-out <id> --reason "Not relevant after pivot"
-dtree supersede <old-id> <new-id>
+dtree restore <id>                                        # reverse scope-out
+dtree supersede <old-id> --by <new-id>
 ```
 
 ### Relationships
@@ -185,28 +194,31 @@ dtree unrelate <src> blocks <target>
 ### Graph queries
 
 ```sh
-dtree graph deps <id>                     # what blocks this?
-dtree graph closure <id> --type blocks --depth 3
-dtree graph cycles
-dtree graph viz <id> --format dot | dot -Tsvg -o tree.svg
+dtree graph deps <id>                     # what blocks this decision?
+dtree graph downstream <id>               # what does this decision block?
+dtree graph closure <id>                  # transitive closure
+dtree graph cycles                        # any blocks-cycles in the tree?
+dtree graph viz <id> | dot -Tsvg -o tree.svg
 ```
 
-### Queues (for guided workflow)
+### Queues (guided workflow)
 
 ```sh
-dtree queue spearhead                     # critical/high, unblocked, sorted
-dtree queue spearhead --next              # just the first item
-dtree queue quick-wins                    # low/medium, unblocked
+dtree queue spearhead                     # decisions blocking the most others
+dtree queue spearhead --tree backend --limit 5
+dtree queue quick-wins                    # unblocked, ready to close
 ```
+
+The web UI presents the same queues as a one-decision-at-a-time walker.
 
 ### Audit
 
 ```sh
-dtree audit ls                            # all events
+dtree audit ls                            # all events (paginated)
 dtree audit ls --actor cam --since 7d
 dtree audit ls --decision <id>            # one decision's history
 dtree audit show <event-id>
-dtree audit replay --at "2026-04-22T14:32:11Z"
+dtree audit replay --tree backend --at 2026-04-22T14:32:11Z
 ```
 
 ### Identity & config
@@ -215,25 +227,27 @@ dtree audit replay --at "2026-04-22T14:32:11Z"
 dtree whoami                              # show resolved identity
 dtree config set --global identity.default cam
 dtree config set --local default_tree backend
-dtree config list
+dtree config get identity.default         # show value + scope
+dtree config list                         # all resolved keys
 dtree as cam-claude new "..."             # one-shot identity override
 ```
 
 ### Servers
 
 ```sh
-dtree serve                               # HTTP API on 127.0.0.1:auto-port
-dtree serve --listen 0.0.0.0:8080         # network bind (requires tokens)
-dtree ui                                  # serve + open browser
+dtree serve                               # HTTP API on 127.0.0.1:8080
+dtree serve --addr 0.0.0.0:8080 --trust token   # network bind (require Bearer tokens)
+dtree token create --as cam --label "laptop"    # mint a token for network access
+dtree ui                                  # serve + open browser to the embedded UI
 dtree mcp --as cam-claude                 # MCP stdio for agents
-dtree mcp --as cam-claude --read-only     # safe-mode
+dtree mcp --as cam-claude --read-only     # safe-mode: query-only tools
 ```
 
 ### Repo maintenance
 
 ```sh
-dtree status                              # repo health
-dtree reindex                             # rebuild SQLite index
+dtree status                              # health + summary stats
+dtree reindex                             # rebuild SQLite index from YAML
 dtree sync                                # reconcile external file edits
 dtree fsck                                # validate invariants
 dtree migrate                             # run schema migrations
@@ -250,7 +264,7 @@ dtree migrate                             # run schema migrations
 | Env | `DTREE_AS`, `DTREE_TREE` |
 | Flags | `--as`, `--tree` |
 
-Higher layers override lower. `dtree config get <key>` shows the resolved value and source layer.
+Higher layers override lower. `dtree config get <key>` shows the resolved value and which scope it came from.
 
 ### Common keys
 
@@ -260,7 +274,7 @@ identity:
 editor: $EDITOR        # falls back to vi
 output: human          # human | json | yaml
 color: auto            # auto | always | never
-default_tree: backend  # used when --tree omitted (single-tree repos)
+default_tree: backend  # used when --tree is omitted (single-tree repos)
 ```
 
 ## Web UI
@@ -270,19 +284,19 @@ dtree ui
 ```
 
 Features:
-- **Graph view** — interactive DAG with auto-layout (dagre). Click nodes for details.
-- **Decision detail** — view, edit, decide. Per-decision audit history as a flowchart.
-- **Kanban** — read-only swimlane visualization by status.
-- **Queues** — guided "next decision" flow for non-technical users (Quick Wins / Spearhead).
-- **Audit log** — searchable, filterable event table.
-- **Timeline scrubber** — drag through time to see graph state at any point.
-- **Dashboard** — metrics: decision counts, decider activity, recommendation acceptance.
+- **Graph view** — interactive tree laid out by ELK with orthogonal edge routing (no edges through nodes). Status-colored, priority-colored when proposed, click a node to open its detail modal.
+- **Decision modal** — overview / history / audit-flow tabs; one-click "Accept recommendation"; click related decisions to navigate within the modal.
+- **Kanban** — read-only swimlanes by status (out-of-scope · proposed · superseded · decided).
+- **Queues** — one-decision-at-a-time walker for Quick Wins / Spearhead, with prev/next/skip and inline actions.
+- **Audit log** — searchable event table, live-tail via SSE, click any decision row to open its modal.
+- **Dashboard** — multi-tree filter, per-actor drill-down (Created / Recommended / Decided facets), agent-vs-human delegation breakdown, recommendation-acceptance headline metric, all click-through to the underlying decisions.
+- **Identity selector** — first-run flow + dropdown to switch acting identity for mutations.
 
 The UI is served from `localhost` only by default. The same server runs headless via `dtree serve`.
 
 ## MCP integration (AI agents)
 
-`dtree mcp` exposes tools and resources via the Model Context Protocol. Add to Claude Desktop's `mcpServers` config:
+`dtree mcp` exposes tools and resources via the Model Context Protocol. Add to your MCP client's config:
 
 ```json
 {
@@ -295,16 +309,20 @@ The UI is served from `localhost` only by default. The same server runs headless
 }
 ```
 
-Tools include `dtree_create_decision`, `dtree_decide`, `dtree_search_decisions`, `dtree_list_audit`, `dtree_replay_state`, etc. All mutations are attributed to the handle the server was launched as, recorded in the audit log with `kind: agent`.
+**Tools** (mirror the HTTP surface): `get_tree`, `create_tree`, `update_tree`, `archive_tree`, `list_decisions`, `get_decision`, `create_decision`, `update_decision`, `delete_decision`, `decide_decision`, `undecide_decision`, `scope_out_decision`, `supersede_decision`, `restore_decision`, `relate_decisions`, `unrelate_decisions`, `decision_history`, `find_decisions`.
 
-Use `--read-only` to give agents query-only access.
+**Resources**: `dtree://trees`, `dtree://trees/{tree}`, `dtree://trees/{tree}/decisions/{id}`, `dtree://actors`.
+
+All mutations are attributed to the handle the server was launched as and recorded in the audit log with the actor's `kind` (`human` or `agent`).
+
+Use `--read-only` to give agents query-only access. See `SKILL.md` for an agent-facing usage guide.
 
 ## Developer guide
 
 ### Prerequisites
 
-- Go 1.22+
-- Node 20+ and pnpm 9+ (for the UI)
+- Go 1.25+
+- Node 20+ and npm 10+ (for the UI)
 - `make`
 
 ### Setup
@@ -312,75 +330,87 @@ Use `--read-only` to give agents query-only access.
 ```sh
 git clone https://github.com/cgould/dtree.git
 cd dtree
-make setup       # installs Go deps + UI deps + generates types
+make setup      # installs Go + npm deps, regenerates TS types
 ```
 
-### Development workflow
+### Common targets
 
 ```sh
-make dev         # runs go server + vite dev server with hot reload
-                 # Server: http://127.0.0.1:8080
-                 # UI dev: http://127.0.0.1:5173 (proxies API to :8080)
-
-make api         # regenerate ui/src/api/types.ts from Go structs (after Go changes)
-make build       # production single binary with embedded UI
-make test        # go test + vitest
-make lint        # biome + go vet
+make ui          # build the SPA into internal/uifs/dist/
+make build       # build ./dtree (single binary with embedded UI)
+make ui-dev      # vite dev server with HMR (proxies /v1 to :8080)
+make test        # go test ./...
+make lint        # go vet ./...
+make coverage    # tests + coverage summary
+make api         # alias for make ui-types — regenerate TS types from Go
+make dev         # build UI + binary, then run dtree serve
 ```
+
+For a tight loop while iterating on the UI: run `make ui-dev` in one terminal and `dtree serve` (with `--repo-root <somewhere>`) in another. The Vite proxy forwards `/v1/*` to the running server.
 
 ### Project structure
 
 ```
-cmd/dtree/                  # CLI entrypoint
+cmd/dtree/                  # CLI entrypoint (calls into internal/cli)
 internal/
-  core/                     # domain types, validation
-  storage/                  # YAML, JSONL, SQLite
-  audit/                    # event sourcing
+  audit/                    # append-only event log + hooks
+  cli/                      # cobra command tree (dtree new, decide, …)
+  concurrency/              # rev tokens, conflict types
+  config/                   # layered config resolution
+  core/                     # domain types + validation
+  fsutil/                   # atomic writes, file locks
+  identity/                 # actor resolver + actors.yaml
+  index/                    # SQLite schema, queries, migrations
+  mcp/                      # MCP server (tools + resources + notifications)
+  migrations/               # schema-version migration registry
+  server/                   # HTTP API (chi router + RFC 7807 errors)
+  storage/                  # YAML decision read/write
+  sync/                     # external-edit reconciliation
   ulid/                     # ID generation
-  cmd/                      # cobra command handlers
-  server/                   # HTTP server
-  mcp/                      # MCP server
-  ui/                       # //go:embed for the SPA
-  migrations/               # schema migration code
-ui/                         # frontend source (Vite + React + TS)
+  uifs/                     # //go:embed for the built SPA
+  validate/                 # struct validators
+ui/                         # frontend (Vite + React 19 + TS strict + HeroUI v2)
+tygo.yaml                   # Go → TypeScript type generation config
 ```
 
 ### Type sharing
 
-Go is the source of truth. After modifying Go structs that are part of the API surface:
+Go is the source of truth. After modifying types in `internal/core`:
 
 ```sh
-make api
-git add ui/src/api/types.ts
+make api                    # regenerates ui/src/api/types.gen.ts
+git add ui/src/api/types.gen.ts
 ```
-
-CI fails if generated `types.ts` would change without a commit.
 
 ### Storage format
 
-- Decisions: YAML with structured fields and block-scalar prose
-- Audit log: append-only JSONL, monthly-partitioned, `merge=union` for distributed contributors
-- Index: SQLite with WAL mode, gitignored, fully rebuildable
+- **Decisions**: YAML with structured fields and block-scalar prose.
+- **Audit log**: append-only JSONL, monthly-partitioned (`audit/YYYY-MM.jsonl`), `merge=union` for distributed contributors.
+- **Tree metadata**: YAML at `.decisions/<slug>/tree.yaml`.
+- **Actors**: YAML at `.decisions/actors.yaml`.
+- **Index**: SQLite (WAL mode, gitignored, fully rebuildable from YAML + audit).
 
-See `PRD.md` for full architectural detail (not in git; generated locally).
+### Build tag
+
+Everything is built with `-tags sqlite_fts5` so the bundled SQLite includes FTS5. The Makefile sets this; if invoking `go` directly, pass it.
 
 ### Contributing
 
-Issues tracked via [beads](https://github.com/gastownhall/beads):
+Issues are tracked via [beads](https://github.com/gastownhall/beads):
 
 ```sh
 bd ready                   # find unblocked work
-bd show bd-<n>             # task detail
-bd close bd-<n> --reason "Implemented in PR #X"
+bd show <id>               # task detail
+bd close <id> --reason "Implemented in PR #X"
 ```
 
-Pull requests welcome. Each PR should:
+Pull requests should:
 
-1. Address a single bd issue
-2. Include tests (Go for backend, Vitest for UI)
-3. Update generated artifacts (`make api` if API surface changed)
-4. Pass `make lint test`
+1. Address a single bd issue (or include a `bd close` line in the description).
+2. Include tests (Go for backend, Vitest for UI changes).
+3. Update generated artifacts (`make api` if the API surface changed).
+4. Pass `make lint && make test`.
 
-### License
+## License
 
 TBD
