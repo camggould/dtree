@@ -254,17 +254,18 @@ func TestApplyRunsInOrder(t *testing.T) {
 }
 
 // TestV0ToV1Idempotent verifies that running the v0→v1 migration on a fresh DB
-// (already at schema_version=1) is a no-op and returns no error.
+// (already at schema_version=CurrentSchemaVersion) is a no-op and returns no error,
+// and that simulating a legacy DB at v0 and applying up to v1 works.
 func TestV0ToV1Idempotent(t *testing.T) {
 	db := openTestDB(t)
 
-	// Fresh DB opened with Open() is already at version 1.
+	// Fresh DB opened with Open() is already at CurrentSchemaVersion.
 	v, err := db.SchemaVersion()
 	if err != nil {
 		t.Fatalf("SchemaVersion: %v", err)
 	}
-	if v != 1 {
-		t.Fatalf("precondition: schema_version = %d, want 1", v)
+	if v != index.CurrentSchemaVersion {
+		t.Fatalf("precondition: schema_version = %d, want %d", v, index.CurrentSchemaVersion)
 	}
 
 	// Manually set to 0 to simulate a legacy DB, then apply the default
@@ -298,8 +299,8 @@ func TestNeedsMigrationFreshDb(t *testing.T) {
 	if needed {
 		t.Errorf("NeedsMigration() = (%d, %d, true), want false for fresh DB", current, target)
 	}
-	if current != 1 {
-		t.Errorf("NeedsMigration current = %d, want 1", current)
+	if current != index.CurrentSchemaVersion {
+		t.Errorf("NeedsMigration current = %d, want %d", current, index.CurrentSchemaVersion)
 	}
 	if target != index.CurrentSchemaVersion {
 		t.Errorf("NeedsMigration target = %d, want %d", target, index.CurrentSchemaVersion)
@@ -332,7 +333,13 @@ func TestNeedsMigrationLegacy(t *testing.T) {
 func TestSyntheticV1ToV2(t *testing.T) {
 	db := openTestDB(t)
 
-	// Fresh DB is at v1; build an isolated registry for this test.
+	// Set schema_version to 1 so the test simulates a v1 DB being migrated to v2
+	// (independent of what CurrentSchemaVersion is set to for the real schema).
+	if err := db.SetSchemaVersion(1); err != nil {
+		t.Fatalf("SetSchemaVersion(1): %v", err)
+	}
+
+	// Build an isolated registry for this test.
 	r := &migrations.Registry{}
 	r.Register(migrations.Migration{
 		From: 0,

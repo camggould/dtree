@@ -52,8 +52,8 @@ func TestVersionJSON(t *testing.T) {
 	if parsed.Schema.Core != 1 {
 		t.Errorf("schema.core: got %d, want 1", parsed.Schema.Core)
 	}
-	if parsed.Schema.Index != 1 {
-		t.Errorf("schema.index: got %d, want 1", parsed.Schema.Index)
+	if parsed.Schema.Index != 2 {
+		t.Errorf("schema.index: got %d, want 2", parsed.Schema.Index)
 	}
 }
 
@@ -81,7 +81,7 @@ func TestVersionYAML(t *testing.T) {
 	if parsed.Schema.Core != 1 {
 		t.Errorf("schema.core: got %d, want 1", parsed.Schema.Core)
 	}
-	if parsed.Schema.Index != 1 {
-		t.Errorf("schema.index: got %d, want 1", parsed.Schema.Index)
+	if parsed.Schema.Index != 2 {
+		t.Errorf("schema.index: got %d, want 2", parsed.Schema.Index)
 	}
 }
