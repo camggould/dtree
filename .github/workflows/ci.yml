@@ -26,6 +26,30 @@ jobs:
           go-version: ${{ matrix.go }}
           cache: true
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: ui/package-lock.json
+
+      # internal/uifs/uifs.go has //go:embed all:dist — Go won't compile
+      # internal/uifs (and `go vet` won't run) until that directory has
+      # at least one file. We ship a .gitkeep so basic vet/build works
+      # on a fresh clone, and we build the real UI here so tests
+      # exercise the actual embedded asset paths.
+      - name: Build embedded UI
+        run: |
+          cd ui
+          npm ci
+          npm run build
+
+      - name: UI typecheck
+        run: cd ui && npm run typecheck
+
+      - name: UI tests
+        if: matrix.os == 'ubuntu-latest'
+        run: cd ui && npm test -- --run
+
       - name: go vet
         run: go vet -tags sqlite_fts5 ./...
 
