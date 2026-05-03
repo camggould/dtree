@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, type CSSProperties } from "react";
+import { useCallback, useMemo, type CSSProperties } from "react";
 import {
   ReactFlow,
   Background,
@@ -11,7 +11,6 @@ import {
   type NodeProps,
 } from "@xyflow/react";
 import dagre from "@dagrejs/dagre";
-import { Button, ButtonGroup } from "@heroui/react";
 import { useParams } from "wouter";
 import { useDecisions } from "@/api/query";
 import { useAppStore } from "@/store/app";
@@ -24,21 +23,33 @@ import {
 import type { Decision, RelationshipType, Status } from "@/api/types.gen";
 import "@xyflow/react/dist/style.css";
 
-// Higher-contrast ring/chip colors. Each status has a strong border + a
-// chip with white bold text on the same color — readable on light + dark
-// without further tweaking.
+// ---- Visuals --------------------------------------------------------------
+
 const STATUS_PALETTE: Record<Status, { ring: string; chipBg: string }> = {
-  proposed:     { ring: "#1d4ed8", chipBg: "#1d4ed8" }, // blue-700
-  decided:      { ring: "#15803d", chipBg: "#15803d" }, // green-700
-  out_of_scope: { ring: "#475569", chipBg: "#475569" }, // slate-600
-  superseded:   { ring: "#c2410c", chipBg: "#c2410c" }, // orange-700
+  proposed: { ring: "#1d4ed8", chipBg: "#1d4ed8" },
+  decided: { ring: "#15803d", chipBg: "#15803d" },
+  out_of_scope: { ring: "#475569", chipBg: "#475569" },
+  superseded: { ring: "#c2410c", chipBg: "#c2410c" },
 };
 
 const EDGE_COLORS: Record<RelationshipType, string> = {
-  blocks:     "#dc2626", // red-600
-  influences: "#ca8a04", // yellow-600
-  supersedes: "#ea580c", // orange-600
-  relates_to: "#2563eb", // blue-600
+  blocks: "#dc2626",
+  influences: "#ca8a04",
+  supersedes: "#ea580c",
+  relates_to: "#2563eb",
+};
+
+// ---- Custom node ----------------------------------------------------------
+
+// Each handle has an explicit id so edges can pick the side closest to the
+// neighbour. Without ids xyflow assigns positional fallbacks that don't
+// route as nicely.
+const HANDLE_STYLE: CSSProperties = {
+  width: 6,
+  height: 6,
+  background: "transparent",
+  border: "none",
+  opacity: 0,
 };
 
 function DecisionNode({ data, selected }: NodeProps) {
@@ -60,13 +71,16 @@ function DecisionNode({ data, selected }: NodeProps) {
           : undefined,
       }}
     >
-      {/* Handles are REQUIRED for custom nodes — edges anchor to them.
-          We expose source AND target on every side so any layout direction
-          (TB/LR/free) routes edges sensibly without per-direction wiring. */}
-      <Handle type="target" position={Position.Top} style={HANDLE_STYLE} />
-      <Handle type="target" position={Position.Left} style={HANDLE_STYLE} />
-      <Handle type="source" position={Position.Bottom} style={HANDLE_STYLE} />
-      <Handle type="source" position={Position.Right} style={HANDLE_STYLE} />
+      {/* One source + one target on every side; ids match the names used by
+          chooseHandlePair below to pick the closest sides per edge. */}
+      <Handle id="t-top" type="target" position={Position.Top} style={HANDLE_STYLE} />
+      <Handle id="t-left" type="target" position={Position.Left} style={HANDLE_STYLE} />
+      <Handle id="t-bottom" type="target" position={Position.Bottom} style={HANDLE_STYLE} />
+      <Handle id="t-right" type="target" position={Position.Right} style={HANDLE_STYLE} />
+      <Handle id="s-top" type="source" position={Position.Top} style={HANDLE_STYLE} />
+      <Handle id="s-left" type="source" position={Position.Left} style={HANDLE_STYLE} />
+      <Handle id="s-bottom" type="source" position={Position.Bottom} style={HANDLE_STYLE} />
+      <Handle id="s-right" type="source" position={Position.Right} style={HANDLE_STYLE} />
 
       <div className="font-semibold leading-tight mb-1.5 text-foreground">
         {truncated}
@@ -81,18 +95,56 @@ function DecisionNode({ data, selected }: NodeProps) {
   );
 }
 
-// Tiny invisible handle — doesn't show, but anchors edges so they can route.
-const HANDLE_STYLE: CSSProperties = {
-  width: 6,
-  height: 6,
-  background: "transparent",
-  border: "none",
-  opacity: 0,
-};
-
 const nodeTypes = { decision: DecisionNode };
 
-type Direction = "TB" | "LR" | "free";
+// ---- Layout ---------------------------------------------------------------
+
+const NODE_W = 220;
+const NODE_H = 72;
+
+/** Run dagre LR with sources (no incoming `blocks`) on the left.
+ *  Returns nodes with computed centre positions; edges untouched.
+ */
+function applyDagreLR(nodes: Node[], edges: Edge[]): Node[] {
+  const g = new dagre.graphlib.Graph();
+  g.setGraph({ rankdir: "LR", nodesep: 50, ranksep: 90, edgesep: 20 });
+  g.setDefaultEdgeLabel(() => ({}));
+  for (const n of nodes) g.setNode(n.id, { width: NODE_W, height: NODE_H });
+  for (const e of edges) g.setEdge(e.source, e.target);
+  dagre.layout(g);
+  return nodes.map((n) => {
+    const p = g.node(n.id);
+    return { ...n, position: { x: p.x - NODE_W / 2, y: p.y - NODE_H / 2 } };
+  });
+}
+
+/** Pick the source/target handle pair that minimises the path. We compare
+ *  the centre-to-centre vector and choose the dominant axis: if Δx
+ *  dominates, route through left/right sides; if Δy dominates, route
+ *  through top/bottom. Result: the edge always exits and enters from the
+ *  side closest to the other node, which reads as a tidy tree.
+ */
+function chooseHandlePair(
+  source: Node,
+  target: Node,
+): { sourceHandle: string; targetHandle: string } {
+  const sx = source.position.x + NODE_W / 2;
+  const sy = source.position.y + NODE_H / 2;
+  const tx = target.position.x + NODE_W / 2;
+  const ty = target.position.y + NODE_H / 2;
+  const dx = tx - sx;
+  const dy = ty - sy;
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    return dx >= 0
+      ? { sourceHandle: "s-right", targetHandle: "t-left" }
+      : { sourceHandle: "s-left", targetHandle: "t-right" };
+  }
+  return dy >= 0
+    ? { sourceHandle: "s-bottom", targetHandle: "t-top" }
+    : { sourceHandle: "s-top", targetHandle: "t-bottom" };
+}
+
+// ---- Build raw nodes/edges ------------------------------------------------
 
 function buildGraph(decisions: Decision[]) {
   const ids = new Set(decisions.map((d) => d.id));
@@ -126,11 +178,7 @@ function buildGraph(decisions: Decision[]) {
           strokeWidth: 2.5,
           strokeDasharray: rel.type === "relates_to" ? "6 3" : undefined,
         },
-        labelStyle: {
-          fill: color,
-          fontSize: 11,
-          fontWeight: 700,
-        },
+        labelStyle: { fill: color, fontSize: 11, fontWeight: 700 },
         labelBgPadding: [4, 2],
         labelBgBorderRadius: 4,
         labelBgStyle: { fill: "white", fillOpacity: 0.85 },
@@ -146,24 +194,7 @@ function buildGraph(decisions: Decision[]) {
   return { nodes, edges };
 }
 
-function applyDagre(
-  nodes: Node[],
-  edges: Edge[],
-  direction: "TB" | "LR",
-): Node[] {
-  const g = new dagre.graphlib.Graph();
-  g.setGraph({ rankdir: direction, nodesep: 60, ranksep: 80 });
-  g.setDefaultEdgeLabel(() => ({}));
-  const W = 220,
-    H = 72;
-  for (const n of nodes) g.setNode(n.id, { width: W, height: H });
-  for (const e of edges) g.setEdge(e.source, e.target);
-  dagre.layout(g);
-  return nodes.map((n) => {
-    const p = g.node(n.id);
-    return { ...n, position: { x: p.x - W / 2, y: p.y - H / 2 } };
-  });
-}
+// ---- Filters --------------------------------------------------------------
 
 const STATUS_OPTIONS: Status[] = [
   "proposed",
@@ -194,22 +225,19 @@ function arrEq(filter: string | string[], value: string): boolean {
   return filter === value;
 }
 
+const EMPTY_LIST: Decision[] = [];
+
+// ---- View -----------------------------------------------------------------
+
 export default function GraphView() {
   const params = useParams<{ tree: string }>();
   const tree = params.tree ?? "";
   const openDecision = useAppStore((s) => s.openDecision);
 
-  const [direction, setDirection] = useState<Direction>("TB");
   const [filters, setFilter, clearFilter] = useFilterParams(FILTERS);
-
-  // Stable filter snapshot (string-key) so memo deps don't fire spuriously.
   const filterKey = JSON.stringify(filters);
 
   const { data: decisionsPage } = useDecisions(tree);
-
-  // Stabilise the items reference: React Query returns the same array between
-  // renders when data is unchanged, but `?? []` was creating a new [] each
-  // time when data was undefined.
   const allDecisions: Decision[] = decisionsPage?.items ?? EMPTY_LIST;
 
   const decisions = useMemo(() => {
@@ -229,21 +257,21 @@ export default function GraphView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allDecisions, filterKey]);
 
-  // ----- DERIVED nodes/edges (no setState — kills the React #185 loop) -----
+  // Single LR layout. After dagre positions things, pick the best handle
+  // pair per edge so anchors point at the side facing the neighbour.
   const { nodes, edges } = useMemo(() => {
-    const { nodes: raw, edges } = buildGraph(decisions);
-    if (raw.length === 0) return { nodes: raw, edges };
-    if (direction === "free") {
-      return {
-        nodes: raw.map((n, i) => ({
-          ...n,
-          position: { x: (i % 5) * 260, y: Math.floor(i / 5) * 130 },
-        })),
-        edges,
-      };
-    }
-    return { nodes: applyDagre(raw, edges, direction), edges };
-  }, [decisions, direction]);
+    const { nodes: raw, edges: rawEdges } = buildGraph(decisions);
+    if (raw.length === 0) return { nodes: raw, edges: rawEdges };
+    const placed = applyDagreLR(raw, rawEdges);
+    const byId = new Map(placed.map((n) => [n.id, n]));
+    const positionedEdges = rawEdges.map((e) => {
+      const s = byId.get(e.source);
+      const t = byId.get(e.target);
+      if (!s || !t) return e;
+      return { ...e, ...chooseHandlePair(s, t) };
+    });
+    return { nodes: placed, edges: positionedEdges };
+  }, [decisions]);
 
   const onNodeClick = useCallback(
     (_: React.MouseEvent, node: Node) => openDecision(tree, node.id),
@@ -262,26 +290,6 @@ export default function GraphView() {
   return (
     <div className="h-[calc(100vh-65px)] flex flex-col">
       <div className="flex items-center gap-3 px-4 py-2 border-b border-divider bg-content1 flex-wrap">
-        <ButtonGroup size="sm" variant="bordered">
-          <Button
-            color={direction === "TB" ? "primary" : "default"}
-            onPress={() => setDirection("TB")}
-          >
-            Top→Bottom
-          </Button>
-          <Button
-            color={direction === "LR" ? "primary" : "default"}
-            onPress={() => setDirection("LR")}
-          >
-            Left→Right
-          </Button>
-          <Button
-            color={direction === "free" ? "primary" : "default"}
-            onPress={() => setDirection("free")}
-          >
-            Free
-          </Button>
-        </ButtonGroup>
         <FilterPills
           filters={FILTERS}
           values={filters}
@@ -316,5 +324,3 @@ export default function GraphView() {
     </div>
   );
 }
-
-const EMPTY_LIST: Decision[] = [];

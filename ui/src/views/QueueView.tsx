@@ -348,7 +348,74 @@ function QueueCard({
               )}
               <div className="text-xs text-foreground/60">
                 Recommendation
+                {decision.recommended_by && <> from {decision.recommended_by}</>}
               </div>
+            </CardBody>
+          </Card>
+        )}
+
+        {/* Resolution cards: outcome / out-of-scope / superseded. Same shape
+            as the modal so a decided item read in the queue is informative. */}
+        {decision.status === "decided" && decision.actual_choice && (
+          <Card className="bg-success-50 dark:bg-success-950 border border-success-300 dark:border-success-700">
+            <CardBody className="gap-1">
+              <div className="text-xs uppercase tracking-wider text-foreground/60 font-semibold">
+                Outcome
+              </div>
+              <div className="font-semibold text-foreground">
+                {decision.actual_choice}
+              </div>
+              {decision.actual_choice_reason && (
+                <p className="text-sm text-foreground/80 whitespace-pre-wrap">
+                  {decision.actual_choice_reason}
+                </p>
+              )}
+              <div className="text-xs text-foreground/60 mt-1 flex flex-wrap gap-2">
+                {decision.decided_by && decision.decided_by.length > 0 && (
+                  <span>Decided by {decision.decided_by.join(", ")}</span>
+                )}
+                {recExists && (
+                  <span>
+                    ·{" "}
+                    {decision.is_recommended ||
+                    decision.actual_choice === decision.recommended_summary
+                      ? "Followed the recommendation"
+                      : "Overrode the recommendation"}
+                  </span>
+                )}
+              </div>
+            </CardBody>
+          </Card>
+        )}
+
+        {decision.status === "out_of_scope" && (
+          <Card className="bg-default-100 dark:bg-default-50/50 border border-default-300 dark:border-default-200">
+            <CardBody className="gap-1">
+              <div className="text-xs uppercase tracking-wider text-foreground/60 font-semibold">
+                Marked out of scope
+              </div>
+              {decision.out_of_scope_reason ? (
+                <p className="text-sm text-foreground whitespace-pre-wrap">
+                  {decision.out_of_scope_reason}
+                </p>
+              ) : (
+                <p className="text-xs italic text-default-400">
+                  No reason recorded.
+                </p>
+              )}
+            </CardBody>
+          </Card>
+        )}
+
+        {decision.status === "superseded" && (
+          <Card className="bg-warning-50 dark:bg-warning-950 border border-warning-300 dark:border-warning-700">
+            <CardBody className="gap-1">
+              <div className="text-xs uppercase tracking-wider text-foreground/60 font-semibold">
+                Superseded
+              </div>
+              <p className="text-sm text-foreground/80">
+                Replaced by a newer decision. Open in modal to navigate to it.
+              </p>
             </CardBody>
           </Card>
         )}
