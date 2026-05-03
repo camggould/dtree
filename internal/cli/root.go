@@ -29,8 +29,10 @@ func NewRootCommand() *cobra.Command {
 
 	root.AddCommand(newActorCommand())
 	root.AddCommand(newAsCommand())
+	root.AddCommand(newAssumeCommand())
 	root.AddCommand(newAuditCommand())
 	root.AddCommand(newConfigCommand())
+	root.AddCommand(newDecideCommand())
 	root.AddCommand(newFsckCommand())
 	root.AddCommand(newInitCommand())
 	root.AddCommand(newLsCommand())
