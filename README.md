@@ -24,7 +24,33 @@ Most teams scatter decision-making across Slack threads, ad-hoc docs, and engine
 
 ## Installation
 
-### From source
+### Recommended: one-line install
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/cgould/dtree/main/install.sh | sh
+```
+
+Detects your OS / arch (linux, darwin × amd64, arm64), downloads the matching release tarball from GitHub, verifies its SHA-256, and installs to `/usr/local/bin/dtree` (or `~/.local/bin/dtree` if `/usr/local/bin` isn't writable). **No Go, Node, or npm needed.** The UI is embedded in the binary; SQLite (with FTS5) is statically linked.
+
+Pin a specific version: `... | sh -s -- --version v0.2.0`. Custom install dir: `... | sh -s -- --prefix ~/.local/bin`. See `install.sh --help` for all flags.
+
+### Verify
+
+```sh
+dtree version
+```
+
+### Other install paths
+
+**Via `go install`** (requires Go 1.25+):
+
+```sh
+go install -tags sqlite_fts5 github.com/cgould/dtree/cmd/dtree@latest
+```
+
+The `sqlite_fts5` build tag is required for full-text search.
+
+**From source** (requires Go 1.25+ and Node 20+):
 
 ```sh
 git clone https://github.com/cgould/dtree.git
@@ -33,20 +59,6 @@ make setup    # installs Go + npm deps and regenerates TS types
 make ui       # builds the embedded web UI
 make build    # produces ./dtree (single binary, UI baked in)
 sudo install -m 0755 dtree /usr/local/bin/dtree
-```
-
-### Via `go install`
-
-```sh
-go install -tags sqlite_fts5 github.com/cgould/dtree/cmd/dtree@latest
-```
-
-The `sqlite_fts5` build tag is required for full-text search to compile in.
-
-### Verify
-
-```sh
-dtree version
 ```
 
 ## Quickstart

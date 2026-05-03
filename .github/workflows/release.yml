@@ -1,0 +1,125 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (e.g. v0.1.0). Required for manual runs."
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.target.os }}-${{ matrix.target.arch }}
+    runs-on: ${{ matrix.target.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - { os: linux,  arch: amd64, runner: ubuntu-latest, ext: "" }
+          - { os: linux,  arch: arm64, runner: ubuntu-22.04-arm, ext: "" }
+          - { os: darwin, arch: amd64, runner: macos-13, ext: "" }
+          - { os: darwin, arch: arm64, runner: macos-14, ext: "" }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Build embedded UI
+        run: |
+          cd ui
+          npm ci
+          npm run build
+
+      - name: Resolve version
+        id: ver
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.target.os }}
+          GOARCH: ${{ matrix.target.arch }}
+          CGO_ENABLED: "1"
+          VERSION: ${{ steps.ver.outputs.version }}
+          COMMIT:  ${{ github.sha }}
+        run: |
+          mkdir -p dist
+          name="dtree-${VERSION}-${GOOS}-${GOARCH}${{ matrix.target.ext }}"
+          go build \
+            -tags sqlite_fts5 \
+            -ldflags="-s -w \
+              -X 'github.com/cgould/dtree/internal/cli.buildVersion=${VERSION}' \
+              -X 'github.com/cgould/dtree/internal/cli.buildCommit=${COMMIT}' \
+              -X 'github.com/cgould/dtree/internal/cli.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)'" \
+            -o "dist/${name}" ./cmd/dtree
+          (cd dist && tar czf "${name}.tar.gz" "${name}" && shasum -a 256 "${name}.tar.gz" > "${name}.tar.gz.sha256")
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dtree-${{ matrix.target.os }}-${{ matrix.target.arch }}
+          path: |
+            dist/dtree-*.tar.gz
+            dist/dtree-*.tar.gz.sha256
+          retention-days: 7
+
+  release:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Aggregate checksums
+        run: |
+          cd dist
+          cat dtree-*.tar.gz.sha256 > SHA256SUMS
+          ls -la
+
+      - name: Resolve version
+        id: ver
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create / update GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version="${{ steps.ver.outputs.version }}"
+          gh release view "$version" >/dev/null 2>&1 || gh release create "$version" \
+            --title "$version" \
+            --notes "Pre-built binaries for linux/darwin × amd64/arm64. Install via:
+          \`\`\`sh
+          curl -fsSL https://raw.githubusercontent.com/cgould/dtree/main/install.sh | sh
+          \`\`\`
+          Verify with SHA256SUMS." \
+            --draft=false
+          gh release upload "$version" dist/dtree-*.tar.gz dist/dtree-*.tar.gz.sha256 dist/SHA256SUMS --clobber

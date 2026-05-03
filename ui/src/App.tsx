@@ -15,14 +15,11 @@ import { QueueView } from "@/views/QueueView";
 import { KanbanView } from "@/views/KanbanView";
 import { Dashboard } from "@/views/Dashboard";
 import { UserDrillDown } from "@/views/UserDrillDown";
+import { HomeView } from "@/views/HomeView";
 import { ActorsView } from "@/views/ActorsView";
 import { SettingsView } from "@/views/SettingsView";
 import "@/styles/globals.css";
 
-// Stub views
-function HomeView() {
-  return <div>Not implemented: HomeView</div>;
-}
 function TreeView() {
   return <GraphView />;
 }
