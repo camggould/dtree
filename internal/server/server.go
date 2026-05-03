@@ -68,6 +68,9 @@ func New(cfg Config) *http.Server {
 		mountTrees(r, cfg)
 		mountDecisions(r, cfg)
 		mountState(r, cfg)
+		mountActors(r, cfg)
+		mountQueues(r, cfg)
+		mountMetrics(r, cfg)
 
 		// Audit endpoints.
 		ah := newAuditHandlers(cfg.RepoRoot)
