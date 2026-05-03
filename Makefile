@@ -35,6 +35,13 @@ test:  ## Run all Go tests.
 lint:  ## Run go vet.
 	go vet -tags "$(GOTAGS)" ./...
 
+.PHONY: coverage
+coverage:  ## Run tests with coverage and print per-package summary.
+	go test -tags "$(GOTAGS)" -coverprofile=coverage.out ./...
+	@echo ""
+	@go tool cover -func=coverage.out | tail -1
+	@echo "HTML report: go tool cover -html=coverage.out"
+
 .PHONY: clean
 clean:  ## Remove build artifacts.
-	rm -f dtree
+	rm -f dtree coverage.out
