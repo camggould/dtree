@@ -27,14 +27,18 @@ func NewRootCommand() *cobra.Command {
 	// --output sets the global output format. Empty string means auto-detect.
 	root.PersistentFlags().String("output", "", "Output format: human, json, yaml (default: auto-detect)")
 
-	root.AddCommand(newVersionCommand())
-	root.AddCommand(newConfigCommand())
-	root.AddCommand(newInitCommand())
-	root.AddCommand(newWhoamiCommand())
-	root.AddCommand(newAsCommand())
 	root.AddCommand(newActorCommand())
+	root.AddCommand(newAsCommand())
 	root.AddCommand(newAuditCommand())
+	root.AddCommand(newConfigCommand())
+	root.AddCommand(newFsckCommand())
+	root.AddCommand(newInitCommand())
+	root.AddCommand(newReindexCommand())
+	root.AddCommand(newStatusCommand())
+	root.AddCommand(newSyncCommand())
 	root.AddCommand(newTreeCommand())
+	root.AddCommand(newVersionCommand())
+	root.AddCommand(newWhoamiCommand())
 
 	return root
 }

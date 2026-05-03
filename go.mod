@@ -1,6 +1,6 @@
 module github.com/cgould/dtree
 
-go 1.24
+go 1.25.5
 
 require (
 	github.com/go-chi/chi/v5 v5.2.5
@@ -12,5 +12,6 @@ require (
 
 require (
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
+	github.com/mark3labs/mcp-go v0.50.0 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
 )
