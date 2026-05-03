@@ -829,6 +829,17 @@ func decideDecisionHandler(cfg Config) http.HandlerFunc {
 			return
 		}
 
+		// Mirror the CLI guard: decide is only valid on proposed decisions.
+		// Without this the same decision can accumulate multiple decide
+		// events, producing a confusing audit trail.
+		if d.Status != core.StatusProposed {
+			WriteProblem(w, r, Conflict(fmt.Sprintf(
+				"decide is only valid for proposed decisions; current status: %s",
+				d.Status,
+			)))
+			return
+		}
+
 		expected, abort := matchIfMatch(w, r, d.Rev)
 		if abort {
 			return
@@ -898,6 +909,15 @@ func undecideDecisionHandler(cfg Config) http.HandlerFunc {
 		}
 		d, ok := loadDecisionOr404(w, r, cfg.DB, id)
 		if !ok {
+			return
+		}
+
+		// Mirror the CLI guard: undecide only valid on decided decisions.
+		if d.Status != core.StatusDecided {
+			WriteProblem(w, r, Conflict(fmt.Sprintf(
+				"undecide is only valid for decided decisions; current status: %s",
+				d.Status,
+			)))
 			return
 		}
 
@@ -973,6 +993,15 @@ func scopeOutDecisionHandler(cfg Config) http.HandlerFunc {
 				WriteProblem(w, r, BadRequest("invalid JSON body: "+err.Error()))
 				return
 			}
+		}
+
+		// Mirror the CLI guard: scope-out is only valid on proposed decisions.
+		if d.Status != core.StatusProposed {
+			WriteProblem(w, r, Conflict(fmt.Sprintf(
+				"scope-out is only valid for proposed decisions; current status: %s",
+				d.Status,
+			)))
+			return
 		}
 
 		expected, abort := matchIfMatch(w, r, d.Rev)

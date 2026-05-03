@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Card,
   CardBody,
@@ -90,7 +90,7 @@ export function QueueView() {
   const back = () => setCursor((i) => Math.max(i - 1, 0));
 
   return (
-    <div className="p-6 space-y-4 max-w-3xl mx-auto">
+    <div className="p-6 space-y-4 max-w-5xl mx-auto">
       <div>
         <h1 className="text-2xl font-bold mb-1">Decision queue</h1>
         <p className="text-sm text-default-500">
@@ -198,20 +198,32 @@ function QueueCard({
   const [showScope, setShowScope] = useState(false);
 
   // Auto-advance after a successful mutation.
+  // CAREFUL: the mutation object's identity changes on every render, so it
+  // CANNOT be in the dep array — that creates an effect → reset() → render
+  // → effect loop ("too much recursion"). Only the boolean flag is a dep.
+  const decideRef = useRef(decide);
+  decideRef.current = decide;
+  const scopeRef = useRef(scopeOut);
+  scopeRef.current = scopeOut;
+  const advanceRef = useRef(onAdvance);
+  advanceRef.current = onAdvance;
+
   useEffect(() => {
     if (decide.isSuccess) {
-      decide.reset();
+      decideRef.current.reset();
       setShowOverride(false);
-      onAdvance();
+      advanceRef.current();
     }
-  }, [decide.isSuccess, decide, onAdvance]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [decide.isSuccess]);
   useEffect(() => {
     if (scopeOut.isSuccess) {
-      scopeOut.reset();
+      scopeRef.current.reset();
       setShowScope(false);
-      onAdvance();
+      advanceRef.current();
     }
-  }, [scopeOut.isSuccess, scopeOut, onAdvance]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scopeOut.isSuccess]);
 
   if (isLoading || !decision) {
     return (
