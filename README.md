@@ -474,4 +474,4 @@ Pull requests should:
 
 ## License
 
-TBD
+MIT
