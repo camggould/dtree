@@ -215,53 +215,6 @@ func incomingRelationships(db *index.DB, targetID string) ([]incomingRef, error)
 	return out, rows.Err()
 }
 
-// resolveDecisionID accepts a full ULID or an unambiguous prefix and returns
-// the canonical 26-char ID. Returns an error if the prefix matches zero or
-// more than one decision.
-func resolveDecisionID(db *index.DB, idOrPrefix string) (string, error) {
-	idOrPrefix = strings.TrimSpace(idOrPrefix)
-	if idOrPrefix == "" {
-		return "", fmt.Errorf("decision id is required")
-	}
-	// Exact match first.
-	if len(idOrPrefix) == 26 {
-		var id string
-		err := db.Conn().QueryRow(
-			`SELECT id FROM decisions WHERE id = ?`, idOrPrefix,
-		).Scan(&id)
-		if err == nil {
-			return id, nil
-		}
-		// Fall through to prefix search if not found.
-	}
-
-	// Prefix search (ULIDs are uppercase Crockford).
-	pattern := strings.ToUpper(idOrPrefix) + "%"
-	rows, err := db.Conn().Query(
-		`SELECT id FROM decisions WHERE id LIKE ? LIMIT 2`, pattern,
-	)
-	if err != nil {
-		return "", fmt.Errorf("resolve id: %w", err)
-	}
-	defer rows.Close()
-	var matches []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return "", err
-		}
-		matches = append(matches, id)
-	}
-	switch len(matches) {
-	case 0:
-		return "", fmt.Errorf("decision %q not found", idOrPrefix)
-	case 1:
-		return matches[0], nil
-	default:
-		return "", fmt.Errorf("decision id %q is ambiguous (matches multiple)", idOrPrefix)
-	}
-}
-
 // findDecisionFile returns the absolute path to the YAML file for id under
 // treeDir. Walks <treeDir>/decisions/ looking for a file whose name begins
 // with id. Returns an error if no file is found.

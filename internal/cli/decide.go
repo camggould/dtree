@@ -6,8 +6,6 @@
 package cli
 
 import (
-	"database/sql"
-	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -190,36 +188,3 @@ func newDecideCommand() *cobra.Command {
 	return cmd
 }
 
-// resolveDecisionID resolves a ULID prefix (or full ULID) to a decision ID
-// by querying the index. Returns an error if no decision matches or if the
-// prefix is ambiguous.
-func resolveDecisionID(db *index.DB, query string) (string, error) {
-	q := strings.TrimSpace(query)
-	if q == "" {
-		return "", fmt.Errorf("empty id")
-	}
-	rows, err := db.Conn().Query(`SELECT id FROM decisions WHERE id LIKE ? AND deleted=0 LIMIT 2`, q+"%")
-	if err != nil {
-		return "", fmt.Errorf("query index: %w", err)
-	}
-	defer rows.Close()
-	var matches []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return "", fmt.Errorf("scan: %w", err)
-		}
-		matches = append(matches, id)
-	}
-	if err := rows.Err(); err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return "", fmt.Errorf("rows: %w", err)
-	}
-	switch len(matches) {
-	case 0:
-		return "", fmt.Errorf("no decision matches %q", query)
-	case 1:
-		return matches[0], nil
-	default:
-		return "", fmt.Errorf("ambiguous id prefix %q (matches multiple decisions)", query)
-	}
-}
