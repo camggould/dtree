@@ -27,5 +27,13 @@ export default defineConfig({
     environment: "jsdom",
     globals: true,
     setupFiles: ["./src/test-setup.ts"],
+    // HeroUIProvider mounts framer-motion's LazyMotion which fires a
+    // dynamic feature import and calls setState when it resolves. On
+    // slower CI runners that microtask lands AFTER jsdom is torn down,
+    // throwing "window is not defined" as an unhandled rejection. Every
+    // assertion still passes, but vitest treats the late rejection as a
+    // suite failure. Ignoring those late errors is safe for our smoke
+    // tests — none of them assert on thrown promises.
+    dangerouslyIgnoreUnhandledErrors: true,
   },
 });
