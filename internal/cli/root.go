@@ -36,6 +36,7 @@ func NewRootCommand() *cobra.Command {
 	root.AddCommand(newReindexCommand())
 	root.AddCommand(newStatusCommand())
 	root.AddCommand(newSyncCommand())
+	root.AddCommand(newShowCommand())
 	root.AddCommand(newTreeCommand())
 	root.AddCommand(newVersionCommand())
 	root.AddCommand(newWhoamiCommand())
