@@ -66,6 +66,10 @@ func New(cfg Config) *http.Server {
 	r.Route("/v1", func(r chi.Router) {
 		r.Get("/health", healthHandler(cfg.Version))
 		mountTrees(r, cfg)
+
+		// Audit endpoints.
+		ah := newAuditHandlers(cfg.RepoRoot)
+		mountAuditRoutes(r, ah)
 	})
 
 	// Catch-all for unknown routes: return Problem Details 404.
