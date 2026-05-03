@@ -85,6 +85,21 @@ var createStatements = []string{
 	)`,
 
 	// -----------------------------------------------------------------------
+	// Tokens table (bearer-token auth)
+	// -----------------------------------------------------------------------
+
+	`CREATE TABLE IF NOT EXISTS tokens (
+		token_hash TEXT PRIMARY KEY,
+		handle     TEXT NOT NULL,
+		created_at TEXT NOT NULL,
+		expires_at TEXT,
+		revoked    INTEGER NOT NULL DEFAULT 0,
+		label      TEXT
+	)`,
+
+	`CREATE INDEX IF NOT EXISTS idx_tokens_handle ON tokens(handle)`,
+
+	// -----------------------------------------------------------------------
 	// Indexes
 	// -----------------------------------------------------------------------
 

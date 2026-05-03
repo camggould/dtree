@@ -23,7 +23,7 @@ import (
 // CurrentSchemaVersion is the index schema version this build supports.
 // Bump when schema-defining migrations are added; the migration runner
 // uses this to decide what to apply.
-const CurrentSchemaVersion = 1
+const CurrentSchemaVersion = 2
 
 // DB wraps *sql.DB with dtree-specific helpers.
 type DB struct {

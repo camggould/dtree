@@ -60,7 +60,7 @@ func New(cfg Config) *http.Server {
 	r.Use(requestLogger)
 	r.Use(recoverer)
 	r.Use(corsLocalhost)
-	r.Use(identityFromHeader(cfg.Resolver))
+	r.Use(identityFromHeader(cfg, cfg.Resolver, cfg.DB))
 
 	// Mount /v1 routes.
 	r.Route("/v1", func(r chi.Router) {
