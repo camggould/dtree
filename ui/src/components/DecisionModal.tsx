@@ -38,8 +38,13 @@ import {
   humanPriority,
   humanAction,
   decisionDescription,
-  truncate,
 } from "@/util/labels";
+import {
+  describeEvent,
+  describeReason,
+  truncate,
+  REASON_CAP,
+} from "@/util/auditDescribe";
 import { formatDistanceToNow } from "date-fns";
 import AuditFlow from "@/components/AuditFlow";
 
@@ -466,10 +471,6 @@ function RecommendationBlock({
 
 // ---- History tab --------------------------------------------------------
 
-// Cap for inline reasoning quotes in history/audit-flow nodes. Longer text
-// is truncated with an ellipsis; the full text is on the decision itself.
-const REASON_CAP = 240;
-
 function HistoryTab({
   tree,
   id,
@@ -488,8 +489,7 @@ function HistoryTab({
     <div className="flex flex-col gap-3 py-2">
       {list.map((e) => {
         const after = (e.payload?.after ?? {}) as Record<string, unknown>;
-        const before = (e.payload?.before ?? {}) as Record<string, unknown>;
-        const summary = describeEvent(e.action, after, before, decision);
+        const summary = describeEvent(e, decision);
         const reason = describeReason(e.action, after, decision);
         return (
           <div
@@ -520,85 +520,6 @@ function HistoryTab({
       })}
     </div>
   );
-}
-
-/** Pull the user-supplied reason text out of an event payload, falling back
- *  to whatever's on the parent decision when the event only carries a diff. */
-function describeReason(
-  action: string,
-  after: Record<string, unknown>,
-  decision: import("@/api/types.gen").Decision,
-): string | null {
-  if (action === "decide") {
-    return (
-      (after.actual_choice_reason as string | undefined) ??
-      decision.actual_choice_reason ??
-      null
-    );
-  }
-  if (action === "scope_out") {
-    return (
-      (after.scope_out_reason as string | undefined) ??
-      (after.reason as string | undefined) ??
-      decision.out_of_scope_reason ??
-      null
-    );
-  }
-  return null;
-}
-
-/** Build a one-line plain-language summary for an audit event's payload.
- *  Uses the parent decision as a fallback context when the event payload
- *  doesn't carry recommendation fields directly (e.g. some server paths
- *  emit a partial diff in `after` rather than the full record).
- */
-function describeEvent(
-  action: string,
-  after: Record<string, unknown>,
-  _before: Record<string, unknown>,
-  decision: import("@/api/types.gen").Decision,
-): string | null {
-  if (action === "decide") {
-    const choice =
-      (after.actual_choice as string | undefined) ?? decision.actual_choice;
-    if (!choice) return null;
-
-    // Prefer the explicit is_recommended flag set by the API; fall back to
-    // matching the choice against whatever recommendation is on the
-    // decision now (the after payload may not include it on partial diffs).
-    const isRecAfter = after.is_recommended as boolean | undefined;
-    const recAfter = after.recommended_summary as string | undefined;
-    const recCurrent = decision.recommended_summary;
-    const recommended = recAfter ?? recCurrent;
-
-    const recExisted = Boolean(recommended);
-    const followed =
-      isRecAfter === true ||
-      (recommended !== undefined && choice === recommended);
-
-    if (followed) return `chose “${choice}” (followed recommendation)`;
-    if (recExisted)
-      return `chose “${choice}” (overrode recommendation “${recommended}”)`;
-    return `chose “${choice}” (no recommendation existed)`;
-  }
-  if (action === "scope_out") {
-    const reason =
-      (after.scope_out_reason as string | undefined) ??
-      (after.reason as string | undefined);
-    return reason ? `reason: ${reason}` : null;
-  }
-  if (action === "supersede") {
-    const by = after.superseded_by as string | undefined;
-    return by ? `replaced by ${by.slice(0, 8)}` : null;
-  }
-  if (action === "undecide") {
-    return "cleared the previous outcome";
-  }
-  if (action === "create") {
-    const summary = after.summary as string | undefined;
-    return summary ? `“${summary}”` : null;
-  }
-  return null;
 }
 
 // ---- Action bar (side-by-side, status-gated) ---------------------------

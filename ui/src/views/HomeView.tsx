@@ -25,6 +25,12 @@ import {
   statusColor,
   humanAction,
 } from "@/util/labels";
+import {
+  describeEvent,
+  describeReason,
+  truncate,
+  REASON_CAP,
+} from "@/util/auditDescribe";
 
 export function HomeView() {
   const treesQuery = useTrees();
@@ -180,7 +186,7 @@ function TreesGrid({
 
 function RecentActivity({
   decisions,
-  actors,
+  actors: _actors,
 }: {
   decisions: import("@/api/types.gen").Decision[];
   actors: import("@/api/types.gen").Actor[] | undefined;
@@ -193,24 +199,13 @@ function RecentActivity({
   const [, navigate] = useLocation();
   const events = data?.items ?? [];
 
-  // Lookups: by id for relate target/src, by handle for "from <name>".
+  // Lookup decisions by id so describeEvent can resolve relate src/target
+  // and supersede old/new to human-readable summaries.
   const decisionsById = useMemo(() => {
     const m = new Map<string, import("@/api/types.gen").Decision>();
     for (const d of decisions) m.set(d.id, d);
     return m;
   }, [decisions]);
-  const actorsByHandle = useMemo(() => {
-    const m = new Map<string, import("@/api/types.gen").Actor>();
-    for (const a of actors ?? []) m.set(a.handle, a);
-    return m;
-  }, [actors]);
-
-  const actorLabel = (handle: string): string => {
-    const a = actorsByHandle.get(handle);
-    if (!a) return handle;
-    const display = a.name || a.handle;
-    return a.kind === "agent" ? `${display} (agent)` : display;
-  };
 
   return (
     <Card>
@@ -224,27 +219,25 @@ function RecentActivity({
         ) : events.length === 0 ? (
           <p className="text-sm text-default-400">Nothing recent.</p>
         ) : (
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-3">
             {events.slice(0, 8).map((e) => {
-              const payload = (e.payload ?? {}) as Record<string, unknown>;
-              const after = payload.after as
-                | Record<string, unknown>
-                | undefined;
+              const after = (e.payload?.after ?? {}) as Record<string, unknown>;
+              const decision = decisionsById.get(e.id) ?? null;
+              const summary = describeEvent(e, decision, decisionsById);
+              const reason = describeReason(e.action, after, decision);
 
-              // Tree events: slug is in e.id (Kind=tree, ID=slug).
               const treeSlug =
                 e.kind === "tree"
-                  ? (e.id || (after?.slug as string | undefined) || "")
+                  ? (e.id || (after.slug as string | undefined) || "")
                   : "";
-              const treeTitle =
-                (after?.title as string | undefined) || treeSlug;
-
               const isDecisionClick =
                 e.kind === "decision" && Boolean(e.tree) && Boolean(e.id);
               const isTreeClick =
                 e.kind === "tree" && Boolean(treeSlug);
               const isRelateClick =
-                e.action === "relate" && Boolean(e.tree) && Boolean(e.id);
+                (e.action === "relate" || e.action === "unrelate") &&
+                Boolean(e.tree) &&
+                Boolean(e.id);
               const clickable =
                 isDecisionClick || isTreeClick || isRelateClick;
 
@@ -256,51 +249,40 @@ function RecentActivity({
                 }
               };
 
-              // Headline: action-specific. Sub-line: extra context.
-              const { primary, secondary } = describeEvent(e, {
-                after,
-                payload,
-                treeTitle,
-                decisionsById,
-                actorLabel,
-              });
-
               return (
                 <button
                   key={e.event_id}
                   type="button"
                   disabled={!clickable}
                   onClick={handleClick}
-                  className={`text-left text-sm p-2 -mx-2 rounded ${
+                  className={`flex items-start gap-2 text-sm border-l-2 border-divider pl-3 py-1 text-left ${
                     clickable
-                      ? "hover:bg-default-100 cursor-pointer"
+                      ? "hover:bg-default-100 cursor-pointer rounded-r"
                       : ""
                   }`}
                 >
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <Chip size="sm" variant="flat" color="primary">
-                      {humanAction(e.action)}
-                    </Chip>
-                    <span className="font-medium text-foreground">
-                      {e.actor}
-                    </span>
-                    {primary && (
-                      <span className="text-default-600 truncate">
-                        — {primary}
-                      </span>
-                    )}
-                  </div>
-                  {secondary && (
-                    <div className="text-xs text-default-500 mt-0.5 italic">
-                      {secondary}
+                  <Chip size="sm" variant="flat" color="primary">
+                    {humanAction(e.action)}
+                  </Chip>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-foreground">
+                      <span className="font-medium">{e.actor}</span>
+                      {summary && (
+                        <span className="text-foreground/80"> — {summary}</span>
+                      )}
                     </div>
-                  )}
-                  <div className="text-xs text-default-400 mt-0.5">
-                    {formatDistanceToNow(new Date(e.ts))} ago
-                    {e.tree && <span> · in {e.tree}</span>}
-                    {!e.tree && e.kind === "tree" && treeSlug && (
-                      <span> · {treeSlug}</span>
+                    {reason && (
+                      <div className="mt-1 text-xs text-foreground/65 italic border-l border-default-200 pl-2">
+                        “{truncate(reason, REASON_CAP)}”
+                      </div>
                     )}
+                    <div className="text-xs text-default-500 mt-0.5">
+                      {formatDistanceToNow(new Date(e.ts))} ago
+                      {e.tree && <span> · in {e.tree}</span>}
+                      {!e.tree && e.kind === "tree" && treeSlug && (
+                        <span> · {treeSlug}</span>
+                      )}
+                    </div>
                   </div>
                 </button>
               );
@@ -310,89 +292,6 @@ function RecentActivity({
       </CardBody>
     </Card>
   );
-}
-
-// describeEvent returns the action-specific headline (primary) and a
-// reasoning line (secondary) for an audit event. Kept outside the
-// component so it can be exercised by future tests.
-function describeEvent(
-  e: import("@/api/types.gen").Event,
-  ctx: {
-    after: Record<string, unknown> | undefined;
-    payload: Record<string, unknown>;
-    treeTitle: string;
-    decisionsById: Map<string, import("@/api/types.gen").Decision>;
-    actorLabel: (handle: string) => string;
-  },
-): { primary: string | null; secondary: string | null } {
-  const { after, payload, treeTitle, decisionsById, actorLabel } = ctx;
-  const summary = (after?.summary as string | undefined) ?? null;
-
-  switch (e.action) {
-    case "decide": {
-      const choice = (after?.actual_choice as string | undefined) ?? null;
-      const reason =
-        (after?.actual_choice_reason as string | undefined) ?? null;
-      const isRec = Boolean(after?.is_recommended);
-      const recBy = (after?.recommended_by as string | undefined) ?? null;
-
-      const parts: string[] = [];
-      if (choice) parts.push(`chose “${choice}”`);
-      if (isRec && recBy) {
-        parts.push(`accepted recommendation from ${actorLabel(recBy)}`);
-      } else if (reason) {
-        parts.push(reason);
-      }
-      return { primary: summary, secondary: parts.join(" — ") || null };
-    }
-
-    case "relate":
-    case "unrelate": {
-      const srcId = (payload.src as string | undefined) ?? e.id;
-      const targetId = (payload.target as string | undefined) ?? "";
-      const type = (payload.type as string | undefined) ?? "relates_to";
-      const srcSummary =
-        decisionsById.get(srcId)?.summary ?? shortId(srcId);
-      const targetSummary =
-        decisionsById.get(targetId)?.summary ?? shortId(targetId);
-      const verb = e.action === "unrelate" ? `un-${type}` : type;
-      return {
-        primary: `${srcSummary} ${verb.replace(/_/g, " ")} ${targetSummary}`,
-        secondary: null,
-      };
-    }
-
-    case "supersede": {
-      const oldId = (payload.old as string | undefined) ?? e.id;
-      const newId = (payload.new as string | undefined) ?? "";
-      const oldSummary =
-        decisionsById.get(oldId)?.summary ?? summary ?? shortId(oldId);
-      const newSummary =
-        decisionsById.get(newId)?.summary ?? shortId(newId);
-      return {
-        primary: `${oldSummary} superseded by ${newSummary}`,
-        secondary: null,
-      };
-    }
-
-    case "scope_out": {
-      const reason = (payload.reason as string | undefined) ?? null;
-      return { primary: summary, secondary: reason };
-    }
-
-    case "tree_create":
-    case "tree_rename":
-    case "tree_archive":
-    case "tree_delete":
-      return { primary: treeTitle || null, secondary: null };
-
-    default:
-      return { primary: summary, secondary: null };
-  }
-}
-
-function shortId(id: string): string {
-  return id ? id.slice(0, 8) : "(unknown)";
 }
 
 // ---------- Proposed-summary panel ---------------------------------------

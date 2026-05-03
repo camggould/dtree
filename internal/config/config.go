@@ -69,19 +69,29 @@ type Resolved struct {
 	Local  *File // raw loaded local config, may be nil
 }
 
-// GlobalPath returns the path to the global config file. It uses
-// os.UserConfigDir() which respects XDG_CONFIG_HOME on Linux. If
-// UserConfigDir() fails, it falls back to $HOME/.dtree/config.yaml.
+// GlobalPath returns the path to the global config file.
+//
+// Resolution order:
+//  1. $XDG_CONFIG_HOME/dtree/config.yaml — honored on every OS (the Go
+//     stdlib only consults XDG_CONFIG_HOME on linux/bsd; we honor it
+//     explicitly so test setups and macOS users who prefer the XDG
+//     layout get a single, predictable answer).
+//  2. os.UserConfigDir()/dtree/config.yaml — OS-default location
+//     (~/Library/Application Support on darwin, %AppData% on windows).
+//  3. $HOME/.dtree/config.yaml — last-resort fallback if no config dir
+//     can be determined.
 func GlobalPath() (string, error) {
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		home, herr := os.UserHomeDir()
-		if herr != nil {
-			return "", fmt.Errorf("config: cannot determine home directory: %w", herr)
-		}
-		return filepath.Join(home, ".dtree", "config.yaml"), nil
+	if x := os.Getenv("XDG_CONFIG_HOME"); x != "" {
+		return filepath.Join(x, "dtree", "config.yaml"), nil
 	}
-	return filepath.Join(dir, "dtree", "config.yaml"), nil
+	if dir, err := os.UserConfigDir(); err == nil {
+		return filepath.Join(dir, "dtree", "config.yaml"), nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("config: cannot determine home directory: %w", err)
+	}
+	return filepath.Join(home, ".dtree", "config.yaml"), nil
 }
 
 // LocalPath returns the path to the local config file within a repo root.
