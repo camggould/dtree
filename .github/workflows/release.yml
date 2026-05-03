@@ -114,6 +114,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           version="${{ steps.ver.outputs.version }}"
+          # --latest pins this release as the response of /releases/latest;
+          # --prerelease=false guards against the API marking 0.x tags as
+          # prereleases automatically (which would 404 the install script).
           gh release view "$version" >/dev/null 2>&1 || gh release create "$version" \
             --title "$version" \
             --notes "Pre-built binaries for linux/darwin × amd64/arm64. Install via:
@@ -121,5 +124,7 @@ jobs:
           curl -fsSL https://raw.githubusercontent.com/camggould/dtree/main/install.sh | sh
           \`\`\`
           Verify with SHA256SUMS." \
-            --draft=false
+            --draft=false \
+            --prerelease=false \
+            --latest
           gh release upload "$version" dist/dtree-*.tar.gz dist/dtree-*.tar.gz.sha256 dist/SHA256SUMS --clobber

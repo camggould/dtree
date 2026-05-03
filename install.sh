@@ -73,12 +73,23 @@ if ! command -v shasum >/dev/null 2>&1 && ! command -v sha256sum >/dev/null 2>&1
 fi
 
 # --- Resolve version ---
+#
+# /releases/latest returns the most recent **stable** release — it deliberately
+# 404s if the only releases are draft or prerelease. We fall back to the first
+# entry of /releases (newest first, includes prereleases) so a fresh repo with
+# only an early release can still be installed via this script.
 if [ -z "$VERSION" ]; then
   info "Resolving latest release..."
-  VERSION="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
+  VERSION="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null \
     | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' \
-    | head -1)"
-  [ -n "$VERSION" ] || err "could not resolve latest release tag"
+    | head -1 || true)"
+  if [ -z "$VERSION" ]; then
+    info "No stable release found; falling back to most recent (incl. prereleases)..."
+    VERSION="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases?per_page=1" 2>/dev/null \
+      | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' \
+      | head -1 || true)"
+  fi
+  [ -n "$VERSION" ] || err "could not resolve any release tag for ${REPO}"
 fi
 info "Installing dtree ${VERSION} for ${OS}/${ARCH}"
 
