@@ -29,14 +29,24 @@ import type { Priority } from "@/api/types.gen";
 
 // For PROPOSED decisions the ring colour communicates PRIORITY (so you can
 // scan the graph and see what's critical). For decisions in any other status
-// the ring colour communicates STATUS — those are settled, priority no
-// longer matters as much as "is it done / scoped / superseded".
-const PRIORITY_PALETTE: Record<Priority, { ring: string; label: string }> = {
-  critical:   { ring: "#b91c1c", label: "Critical" }, // red-700
-  high:       { ring: "#ea580c", label: "High" },     // orange-600
-  medium:     { ring: "#1d4ed8", label: "Medium" },   // blue-700
-  low:        { ring: "#64748b", label: "Low" },      // slate-500
-  assumption: { ring: "#8b5cf6", label: "Assumption" }, // violet-500
+// the ring colour communicates STATUS.
+//
+// Assumption is special: even though the API stores it as a Priority, we
+// treat it as a fourth status. They aren't proposals or normal decisions —
+// they're "I'll go with X for now, revisit later". Always grey + dashed.
+const PRIORITY_PALETTE: Record<
+  Exclude<Priority, "assumption">,
+  { ring: string; label: string }
+> = {
+  critical: { ring: "#b91c1c", label: "Critical" }, // red-700
+  high:     { ring: "#ea580c", label: "High" },     // orange-600
+  medium:   { ring: "#1d4ed8", label: "Medium" },   // blue-700
+  low:      { ring: "#475569", label: "Low" },      // slate-600
+};
+const ASSUMPTION_STYLE = {
+  ring: "#94a3b8", // slate-400 — calmer than any priority
+  label: "Assumption",
+  dashed: true,
 };
 const STATUS_PALETTE_NON_PROPOSED: Record<
   Exclude<Status, "proposed">,
@@ -52,19 +62,14 @@ function nodeStyleFor(d: { status: Status; priority: Priority }): {
   label: string;
   dashed: boolean;
 } {
+  if (d.priority === "assumption") return { ...ASSUMPTION_STYLE };
   if (d.status === "proposed") {
-    const p = PRIORITY_PALETTE[d.priority] ?? PRIORITY_PALETTE.medium;
+    const p = PRIORITY_PALETTE[d.priority as Exclude<Priority, "assumption">];
     return { ring: p.ring, label: p.label.toUpperCase(), dashed: false };
   }
   const s =
-    STATUS_PALETTE_NON_PROPOSED[
-      d.status as Exclude<Status, "proposed">
-    ];
-  return {
-    ring: s.ring,
-    label: s.label.toUpperCase(),
-    dashed: s.dashed ?? false,
-  };
+    STATUS_PALETTE_NON_PROPOSED[d.status as Exclude<Status, "proposed">];
+  return { ring: s.ring, label: s.label.toUpperCase(), dashed: s.dashed ?? false };
 }
 
 const EDGE_COLORS: Record<RelationshipType, string> = {
@@ -149,26 +154,18 @@ const nodeTypes = { decision: DecisionNode };
 const NODE_W = 220;
 const NODE_H = 72;
 
-/** Run dagre LR with sources (no incoming `blocks`) on the left.
- *  Returns nodes with computed centre positions; edges untouched.
- *
- *  Layout details that matter when the graph contains cycles or skip-rank
- *  edges (e.g. `auth influences db` while `db blocks orm` blocks `auth`):
- *    - Only `blocks` edges define the rank structure. Other relationship
- *      types (influences, relates_to, supersedes) get IGNORED for ranking
- *      but still rendered, so they don't distort the tree.
- *    - acyclicer 'greedy' breaks any remaining cycles by reversing the
- *      smallest set of edges, instead of crashing.
- *    - Generous nodesep gives within-rank lanes for skip-edges to pass
- *      through.
- *    - ranker 'tight-tree' produces compact trees with sources on the left.
+/** Top-down dagre layout. Sources (no incoming `blocks`) sit at the TOP
+ *  of the canvas; dependencies cascade DOWN.
+ *  Only `blocks` edges drive the rank assignment — soft edges
+ *  (influences / relates_to / supersedes) still render but don't
+ *  distort the structural shape of the tree.
  */
-function applyDagreLR(nodes: Node[], edges: Edge[]): Node[] {
+function applyDagreTB(nodes: Node[], edges: Edge[]): Node[] {
   const g = new dagre.graphlib.Graph();
   g.setGraph({
-    rankdir: "LR",
-    nodesep: 90, // within-rank vertical gap (LR -> y axis)
-    ranksep: 140, // between-rank horizontal gap
+    rankdir: "TB",
+    nodesep: 80, // horizontal gap within a rank
+    ranksep: 110, // vertical gap between ranks
     edgesep: 30,
     marginx: 30,
     marginy: 30,
@@ -178,9 +175,6 @@ function applyDagreLR(nodes: Node[], edges: Edge[]): Node[] {
   g.setDefaultEdgeLabel(() => ({}));
   for (const n of nodes) g.setNode(n.id, { width: NODE_W, height: NODE_H });
   for (const e of edges) {
-    // Only structural edges drive the rank assignment. Soft edges still
-    // render but don't push nodes around (which produced the cramped
-    // layer-2 / influences overlap previously).
     const data = e.data as { type?: string } | undefined;
     if (data?.type && data.type !== "blocks") continue;
     g.setEdge(e.source, e.target);
@@ -192,11 +186,16 @@ function applyDagreLR(nodes: Node[], edges: Edge[]): Node[] {
   });
 }
 
-/** Pick the source/target handle pair that minimises the path. We compare
- *  the centre-to-centre vector and choose the dominant axis: if Δx
- *  dominates, route through left/right sides; if Δy dominates, route
- *  through top/bottom. Result: the edge always exits and enters from the
- *  side closest to the other node, which reads as a tidy tree.
+/** Pick the source/target handle pair for a TB layout.
+ *
+ *  - Forward (target below source, or directly below): exit BOTTOM, enter TOP.
+ *    This is the common case and reads as a clean parent → child line.
+ *  - Side (target on a different column at roughly the same row): exit/enter
+ *    via the appropriate horizontal side.
+ *  - Back-edge (target above source — i.e. the edge points UP): route via
+ *    the SIDES so the line wraps around the chain instead of cutting back
+ *    through nodes between them. The side is chosen by the horizontal
+ *    direction so the loop opens toward the empty space.
  */
 function chooseHandlePair(
   source: Node,
@@ -208,14 +207,27 @@ function chooseHandlePair(
   const ty = target.position.y + NODE_H / 2;
   const dx = tx - sx;
   const dy = ty - sy;
-  if (Math.abs(dx) >= Math.abs(dy)) {
+
+  // Back-edge — target is above the source. Route around via sides so it
+  // doesn't cut through any node sitting between them on the same axis.
+  if (dy < -NODE_H / 2) {
+    if (Math.abs(dx) < NODE_W) {
+      // Same column or very close — loop out one side and back to the
+      // opposite side of the target. Default to the right.
+      return { sourceHandle: "s-right", targetHandle: "t-right" };
+    }
     return dx >= 0
-      ? { sourceHandle: "s-right", targetHandle: "t-left" }
-      : { sourceHandle: "s-left", targetHandle: "t-right" };
+      ? { sourceHandle: "s-right", targetHandle: "t-right" }
+      : { sourceHandle: "s-left", targetHandle: "t-left" };
   }
-  return dy >= 0
-    ? { sourceHandle: "s-bottom", targetHandle: "t-top" }
-    : { sourceHandle: "s-top", targetHandle: "t-bottom" };
+
+  // Forward / sideways — pick dominant axis.
+  if (dy >= Math.abs(dx) * 0.6) {
+    return { sourceHandle: "s-bottom", targetHandle: "t-top" };
+  }
+  return dx >= 0
+    ? { sourceHandle: "s-right", targetHandle: "t-left" }
+    : { sourceHandle: "s-left", targetHandle: "t-right" };
 }
 
 // ---- Build raw nodes/edges ------------------------------------------------
@@ -339,7 +351,7 @@ export default function GraphView() {
   const { nodes, edges } = useMemo(() => {
     const { nodes: raw, edges: rawEdges } = buildGraph(decisions);
     if (raw.length === 0) return { nodes: raw, edges: rawEdges };
-    const placed = applyDagreLR(raw, rawEdges);
+    const placed = applyDagreTB(raw, rawEdges);
     const byId = new Map(placed.map((n) => [n.id, n]));
     const positionedEdges = rawEdges.map((e) => {
       const s = byId.get(e.source);

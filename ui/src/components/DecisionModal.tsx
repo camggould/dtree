@@ -120,12 +120,28 @@ function DecisionModalBody({
             {decision.summary}
           </h2>
           <div className="flex items-center gap-1 shrink-0">
-            <Chip size="sm" variant="flat" color={statusColor(decision.status)}>
-              {humanStatus(decision.status)}
-            </Chip>
-            <Chip size="sm" variant="flat">
-              {humanPriority(decision.priority)}
-            </Chip>
+            {/* Assumption is treated as a meta-status: it overrides the
+                normal status chip because "assumption" reads more clearly
+                than "Decided" with a tiny "Assumption" priority chip next to
+                it. */}
+            {decision.priority === "assumption" ? (
+              <Chip size="sm" variant="flat" color="default">
+                Assumption
+              </Chip>
+            ) : (
+              <>
+                <Chip
+                  size="sm"
+                  variant="flat"
+                  color={statusColor(decision.status)}
+                >
+                  {humanStatus(decision.status)}
+                </Chip>
+                <Chip size="sm" variant="flat">
+                  {humanPriority(decision.priority)}
+                </Chip>
+              </>
+            )}
           </div>
         </div>
         <div className="text-xs text-default-500 font-normal">
@@ -617,7 +633,37 @@ function ActionBar({
     );
   }
 
+  const isAssumption = decision.priority === "assumption";
+
   const buttonsForStatus = (() => {
+    // Assumptions get their own treatment regardless of status: they're a
+    // working assumption, not a decision. The user wants to either OVERRIDE
+    // (replace with a real choice) or CLEAR (back to nothing).
+    if (isAssumption) {
+      // If still proposed, "Override assumption" opens the decide form so
+      // they can record an actual choice + reason. If already decided,
+      // "Undecide" clears the assumption back to a blank slate.
+      const showActions =
+        decision.status === "proposed" || decision.status === "decided";
+      if (!showActions) return null;
+      return (
+        <ButtonGroup size="sm" variant="flat">
+          <Button color="primary" onPress={() => setShowDecide(true)}>
+            Override assumption
+          </Button>
+          {decision.status === "decided" && (
+            <Button
+              color="warning"
+              isLoading={undecide.isPending}
+              onPress={() => undecide.mutate(decision._rev)}
+            >
+              Clear assumption
+            </Button>
+          )}
+        </ButtonGroup>
+      );
+    }
+
     if (decision.status === "proposed") {
       const recExists = Boolean(decision.recommended_summary);
       return (
