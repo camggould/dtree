@@ -90,6 +90,17 @@ func Unprocessable(detail string) Problem {
 	}
 }
 
+// PreconditionFailed returns a 412 Problem Details object (for If-Match
+// optimistic-concurrency violations).
+func PreconditionFailed(detail string) Problem {
+	return Problem{
+		Type:   "/errors/precondition-failed",
+		Title:  "Precondition Failed",
+		Status: http.StatusPreconditionFailed,
+		Detail: detail,
+	}
+}
+
 // Internal returns a 500 Problem Details object.
 func Internal(detail string) Problem {
 	return Problem{

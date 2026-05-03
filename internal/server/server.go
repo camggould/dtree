@@ -66,6 +66,7 @@ func New(cfg Config) *http.Server {
 	r.Route("/v1", func(r chi.Router) {
 		r.Get("/health", healthHandler(cfg.Version))
 		mountTrees(r, cfg)
+		mountDecisions(r, cfg)
 
 		// Audit endpoints.
 		ah := newAuditHandlers(cfg.RepoRoot)
