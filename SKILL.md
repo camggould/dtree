@@ -18,15 +18,19 @@ Use this skill when:
 
 Look for `.decisions/` at the repo root. If it doesn't exist, dtree isn't initialised here — don't proactively initialise it; ask the user first. If it does exist, the rest of this skill applies.
 
+## Check if your primary user has an identity
+
+If your primary user you are helping does not have an identity in the repo's decision tree, help them out by making one for them. This identity will often align with their git config.
+
 ## Pick your identity
 
 Every action in dtree is attributed to a *handle* — a stable, registered identity. You should have your own, distinct from the user's:
 
 ```sh
-dtree actor add claude --name "Claude" --kind agent --email noreply@anthropic.com
+dtree actor add <primary user>-agent --name "<Primary User>'s Agent" --kind agent --email (same as your primary user you are helping)
 ```
 
-Or whatever name the user prefers (`claude-on-cam-laptop`, `agent-reviewer`, etc.). The handle should be stable — reuse the same one across sessions so your activity aggregates.
+Or whatever name the user prefers (`agent-on-primary-user-laptop`, `agent-reviewer`, etc.). The handle should be stable — reuse the same one across sessions so your activity aggregates.
 
 Three ways to act under your handle (in order of preference):
 
@@ -40,7 +44,9 @@ Three ways to act under your handle (in order of preference):
 
 If you forget to set identity, `dtree` falls back to whatever the user has configured globally — your activity will be attributed to *them*, which is wrong. Always be explicit.
 
-Verify: `dtree as claude whoami` should print your handle.
+Verify: `dtree as agent whoami` should print your handle.
+
+If you are assisting your primary user and they are asking you to create a specific decision that they come up with, assume their identity to create the decision. Same goes for if they are making a decision or recommendation. Only assume your own identity when you are making your own decisions, recommendations, or executing a decision.
 
 ## Discover what exists before creating
 

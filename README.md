@@ -6,11 +6,15 @@
 
 `dtree` lets engineering teams record decisions as plain YAML files in a directory tree, track typed relationships between them (`blocks`, `influences`, `supersedes`, `relates_to`), maintain an append-only audit log, and surface the result through a CLI, a local web UI, and an MCP server for AI agents.
 
+![Product Preview](./references/at_a_glance.png)
+
 ## Status
 
 **Beta — feature-complete for v1.** The data model and storage formats are stable. Server and CLI surface are stable. UI is functional and being polished.
 
 ## What is dtree?
+
+![Graph](./references/tree.png)
 
 Most teams scatter decision-making across Slack threads, ad-hoc docs, and engineers' heads. Six months later, no one remembers why a decision was made — or even that it was made.
 
@@ -39,10 +43,9 @@ sudo install -m 0755 dtree /usr/local/bin/dtree
 
 The resulting binary is fully self-contained — UI baked in, SQLite (with FTS5) statically linked, no runtime deps beyond libc.
 
-### Pre-built binaries (coming soon)
+### Pre-built binaries 
 
-Once `v0.1.0` is tagged, the following one-liner will fetch a verified pre-built binary for your platform — no Go or Node toolchain required:
-
+Install with this command:
 ```sh
 curl -fsSL https://raw.githubusercontent.com/camggould/dtree/main/install.sh | sh
 ```
@@ -297,8 +300,60 @@ Features:
 - **Audit log** — searchable event table, live-tail via SSE, click any decision row to open its modal.
 - **Dashboard** — multi-tree filter, per-actor drill-down (Created / Recommended / Decided facets), agent-vs-human delegation breakdown, recommendation-acceptance headline metric, all click-through to the underlying decisions.
 - **Identity selector** — first-run flow + dropdown to switch acting identity for mutations.
+- **Sync with chat** — Decisions made in the UI are discoverable by your agentic companions, and vice versa.
 
 The UI is served from `localhost` only by default. The same server runs headless via `dtree serve`.
+
+### All your repo's decision activity at a glance
+![At a glance](./references/at_a_glance.png)
+
+### Three ways of viewing and interacting with your decisions
+
+#### Graph view
+
+![Graph](./references/tree.png)
+
+#### Kanban view
+
+![Kanban](./references/kanban.png)
+
+#### Queue view
+
+Explore quick wins to resolve anything that is unblocked first, or go spearhead mode to focus on the most critical blockers first.
+
+![Queue](./references/queues.png)
+
+### See the history of your decision
+
+![Audit flow](./references/audit_flow.png)
+
+### Bring your team; humans and agents
+![Actors](./references/actors.png)
+
+### Extract insights across your decisions
+
+![Dashboard](./references/dashboard.png)
+
+### Understand the quality of your agent's recommendations
+
+![Agent profile](./references/agent_profile.png)
+
+### See who trusts their agentic companions the most
+
+![Human profile](./references/human_profile.png)
+
+### Track decisions in real time
+
+![Recents](./references/recents.png)
+
+### Audit decision history
+
+![Audit history](./references/audit_table.png)
+
+### Accept recommendations, or go your own way
+
+![Decision modal](./references/decision_modal.png)
+
 
 ## MCP integration (AI agents)
 
