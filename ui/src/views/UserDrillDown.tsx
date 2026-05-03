@@ -272,7 +272,7 @@ function CreatorSection({
       <CardBody className="gap-4">
         <div className="grid grid-cols-3 gap-2">
           <MetricBlock
-            label="Decisions opened"
+            label="Total opened"
             value={f.totalCreated}
             onClick={() =>
               drill(
@@ -282,28 +282,20 @@ function CreatorSection({
             }
           />
           <MetricBlock
-            label="Where they also recommended"
-            value={f.alsoRecommender}
-            subtext={`of ${f.totalCreated}`}
+            label="Outstanding"
+            value={f.outstanding}
+            subtext="still proposed"
             onClick={() =>
               drill(
-                { facet: "creator", key: "alsoRecommender" },
-                `${handle} opened and recommended`,
+                { facet: "creator", key: "byStatus", status: "proposed" },
+                `Outstanding decisions opened by ${handle}`,
               )
             }
           />
           <MetricBlock
-            label="Their pick was followed"
-            value={pct(f.alsoRecommenderDecided.rate)}
-            subtext={`${f.alsoRecommenderDecided.accepted}/${f.alsoRecommenderDecided.total} decided`}
-            color="success"
-            onClick={() =>
-              drill(
-                { facet: "creator", key: "alsoRecAccepted" },
-                `${handle}'s pick was followed`,
-                "Decisions where they were both opener and recommender, and the chosen outcome matched their recommendation.",
-              )
-            }
+            label="Resolved"
+            value={f.resolved}
+            subtext="decided / scoped / superseded"
           />
         </div>
 
@@ -322,8 +314,116 @@ function CreatorSection({
             }))}
           />
         </div>
+
+        {f.resolved > 0 && (
+          <div className="pt-2 border-t border-divider">
+            <div className="text-sm font-medium mb-2">
+              Resolved decisions, by who recommended
+            </div>
+            <StackedBar
+              segments={[
+                {
+                  label: "Self",
+                  value: f.resolvedByRecSource.self,
+                  color: "#64748b",
+                },
+                {
+                  label: "Another agent",
+                  value: f.resolvedByRecSource.anotherAgent,
+                  color: "#a855f7",
+                },
+                {
+                  label: "Another human",
+                  value: f.resolvedByRecSource.anotherHuman,
+                  color: "#3b82f6",
+                },
+                {
+                  label: "No recommendation",
+                  value: f.resolvedByRecSource.none,
+                  color: "#94a3b8",
+                },
+              ]}
+            />
+          </div>
+        )}
       </CardBody>
     </Card>
+  );
+}
+
+function BucketBar({
+  label,
+  buckets,
+  total,
+  drill,
+  facet,
+}: {
+  label: string;
+  buckets: { self: number; anotherAgent: number; anotherHuman: number; unknown: number };
+  total: number;
+  drill: (b: UserBucket, title: string, description?: string) => void;
+  facet: "accepted" | "overridden";
+}) {
+  if (total === 0) return null;
+  const segments = [
+    {
+      label: "Self",
+      value: buckets.self,
+      color: "#64748b",
+      bucket: "self" as const,
+    },
+    {
+      label: "Another agent",
+      value: buckets.anotherAgent,
+      color: "#a855f7",
+      bucket: "anotherAgent" as const,
+    },
+    {
+      label: "Another human",
+      value: buckets.anotherHuman,
+      color: "#3b82f6",
+      bucket: "anotherHuman" as const,
+    },
+    {
+      label: "Unknown",
+      value: buckets.unknown,
+      color: "#94a3b8",
+      bucket: "unknown" as const,
+    },
+  ];
+  const drillFor = (b: typeof segments[number]) => {
+    // Map BucketBar's bucket keys to UserBucket types.
+    const bucketMap = {
+      self: "self",
+      anotherAgent: "otherAgent",
+      anotherHuman: "otherHuman",
+      unknown: "unknownActor",
+    } as const;
+    return () =>
+      drill(
+        {
+          facet: "recommender",
+          key: facet === "accepted" ? "accepted" : "overridden",
+        },
+        `${facet === "accepted" ? "Accepted" : "Overridden"} by ${b.label.toLowerCase()}`,
+        `${b.value} of ${total} ${facet} were ${facet === "accepted" ? "followed" : "overruled"} by ${b.label.toLowerCase()}.`,
+      );
+    void bucketMap;
+  };
+  return (
+    <div>
+      <div className="text-sm font-medium mb-2">{label}</div>
+      <StackedBar
+        segments={segments
+          .filter((s) => s.value > 0)
+          .map((s) => ({
+            label: s.label,
+            value: s.value,
+            color: s.color,
+            onClick: drillFor(s),
+          }))}
+      />
+    </div>
   );
 }
 
@@ -336,7 +436,6 @@ function RecommenderSection({
   handle: string;
   drill: (b: UserBucket, title: string, description?: string) => void;
 }) {
-  const k = f.byKindOfDecider;
   return (
     <Card>
       <CardHeader>
@@ -344,7 +443,7 @@ function RecommenderSection({
           <h2 className="text-lg font-semibold">
             <span className="text-secondary">Recommended</span> by {handle}
           </h2>
-          <Tooltip content="When this person suggested a specific choice. We split acceptance by who actually made the call: themselves (autonomous), another agent, or a human.">
+          <Tooltip content="Suggestions this person made. Each can later be accepted or overridden — and we split that by who took the action.">
             <Info size={14} className="text-default-400 cursor-help" />
           </Tooltip>
         </div>
@@ -362,106 +461,53 @@ function RecommenderSection({
             }
           />
           <MetricBlock
-            label="Resolved"
-            value={f.decidedCount}
-            subtext={`${f.totalRecommended - f.decidedCount} still open`}
-            onClick={() =>
-              drill(
-                { facet: "recommender", key: "decided" },
-                `${handle}'s resolved suggestions`,
-              )
-            }
-          />
-          <MetricBlock
-            label="Followed overall"
-            value={pct(f.acceptance.rate)}
-            subtext={`${f.acceptance.accepted}/${f.acceptance.total}`}
+            label="Accepted"
+            value={f.acceptedCount}
+            subtext={`of ${f.decidedCount} resolved`}
             color="success"
             onClick={() =>
               drill(
                 { facet: "recommender", key: "accepted" },
-                `${handle}'s suggestions that were followed`,
+                `${handle}'s suggestions that were accepted`,
+              )
+            }
+          />
+          <MetricBlock
+            label="Overridden"
+            value={f.overriddenCount}
+            subtext={`${pct(
+              f.decidedCount === 0 ? null : (f.overriddenCount / f.decidedCount) * 100,
+            )}`}
+            onClick={() =>
+              drill(
+                { facet: "recommender", key: "overridden" },
+                `${handle}'s suggestions that were overridden`,
               )
             }
           />
         </div>
 
-        {f.decidedCount > 0 && (
-          <div className="space-y-2 pt-1 border-t border-divider">
-            <div className="text-sm font-medium pt-2">
-              Acceptance, by who made the call
-            </div>
-            {k.self.total > 0 && (
-              <RateRow
-                label="Self (autonomous)"
-                stat={k.self}
-                color="default"
-                onClick={() =>
-                  drill(
-                    {
-                      facet: "recommender",
-                      key: "byDeciderBucket",
-                      bucket: "self",
-                    },
-                    `${handle} accepted their own recommendation`,
-                    "The recommender and the decider are the same person.",
-                  )
-                }
-              />
-            )}
-            {k.otherAgent.total > 0 && (
-              <RateRow
-                label="Another agent decided"
-                stat={k.otherAgent}
-                color="secondary"
-                onClick={() =>
-                  drill(
-                    {
-                      facet: "recommender",
-                      key: "byDeciderBucket",
-                      bucket: "otherAgent",
-                    },
-                    `${handle}'s suggestions accepted by another agent`,
-                    "Cross-agent acceptance — a different agent took the call.",
-                  )
-                }
-              />
-            )}
-            {k.otherHuman.total > 0 && (
-              <RateRow
-                label="A human decided"
-                stat={k.otherHuman}
-                color="primary"
-                onClick={() =>
-                  drill(
-                    {
-                      facet: "recommender",
-                      key: "byDeciderBucket",
-                      bucket: "otherHuman",
-                    },
-                    `${handle}'s suggestions accepted by a human`,
-                    "The trust signal: how often a human acted on this person's suggestion.",
-                  )
-                }
-              />
-            )}
-            {k.unknownActor.total > 0 && (
-              <RateRow
-                label="Decider unknown"
-                stat={k.unknownActor}
-                color="default"
-                onClick={() =>
-                  drill(
-                    {
-                      facet: "recommender",
-                      key: "byDeciderBucket",
-                      bucket: "unknownActor",
-                    },
-                    `${handle}'s suggestions decided by an unrecognised actor`,
-                  )
-                }
-              />
-            )}
+        {f.acceptedCount > 0 && (
+          <div className="pt-2 border-t border-divider">
+            <BucketBar
+              label="Who accepted"
+              buckets={f.acceptedBy}
+              total={f.acceptedCount}
+              drill={drill}
+              facet="accepted"
+            />
+          </div>
+        )}
+
+        {f.overriddenCount > 0 && (
+          <div className="pt-2 border-t border-divider">
+            <BucketBar
+              label="Who overrode"
+              buckets={f.overriddenBy}
+              total={f.overriddenCount}
+              drill={drill}
+              facet="overridden"
+            />
           </div>
         )}
       </CardBody>
@@ -640,9 +686,9 @@ function DeciderSection({
           )}
         </div>
 
-        {(f.selfTrust.total > 0 ||
-          f.otherAgentTrust.total > 0 ||
-          f.humanTrust.total > 0) && (
+        {(f.bySource.self.total > 0 ||
+          f.bySource.anotherAgent.total > 0 ||
+          f.bySource.anotherHuman.total > 0) && (
           <div className="space-y-2 pt-2 border-t border-default-200">
             <div className="text-sm font-medium flex items-center gap-2">
               Acceptance rate, by recommender
@@ -650,10 +696,10 @@ function DeciderSection({
                 <Info size={12} className="text-default-400 cursor-help" />
               </Tooltip>
             </div>
-            {f.selfTrust.total > 0 && (
+            {f.bySource.self.total > 0 && (
               <RateRow
                 label="Their own"
-                stat={f.selfTrust}
+                stat={f.bySource.self}
                 color="default"
                 onClick={() =>
                   drill(
@@ -663,27 +709,23 @@ function DeciderSection({
                 }
               />
             )}
-            {f.otherAgentTrust.total > 0 && (
+            {f.bySource.anotherAgent.total > 0 && (
               <RateRow
                 label="Another agent's"
-                stat={f.otherAgentTrust}
+                stat={f.bySource.anotherAgent}
                 color="secondary"
                 onClick={() =>
                   drill(
-                    {
-                      facet: "decider",
-                      key: "trustSource",
-                      source: "otherAgent",
-                    },
+                    { facet: "decider", key: "trustSource", source: "otherAgent" },
                     `${handle}'s decisions where another agent recommended`,
                   )
                 }
               />
             )}
-            {f.humanTrust.total > 0 && (
+            {f.bySource.anotherHuman.total > 0 && (
               <RateRow
                 label="A human's"
-                stat={f.humanTrust}
+                stat={f.bySource.anotherHuman}
                 color="primary"
                 onClick={() =>
                   drill(
@@ -693,6 +735,25 @@ function DeciderSection({
                 }
               />
             )}
+          </div>
+        )}
+
+        {f.agenticAutonomy.total > 0 && (
+          <div className="pt-3 border-t border-divider flex items-center justify-between gap-4">
+            <div>
+              <div className="text-sm font-medium flex items-center gap-2">
+                Agentic autonomy
+                <Tooltip content="Of all decisions where an agent recommended a choice and this person decided, what fraction did they follow? High = comfortable delegating to AI.">
+                  <Info size={12} className="text-default-400 cursor-help" />
+                </Tooltip>
+              </div>
+              <div className="text-xs text-default-500 mt-0.5">
+                {f.agenticAutonomy.accepted} of {f.agenticAutonomy.total} agent recommendations followed
+              </div>
+            </div>
+            <div className="text-3xl font-bold text-success">
+              {pct(f.agenticAutonomy.rate)}
+            </div>
           </div>
         )}
       </CardBody>

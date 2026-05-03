@@ -240,20 +240,26 @@ function QueueCard({
 
   return (
     <Card className="border border-divider">
-      <CardHeader className="flex flex-col gap-2">
-        <div className="text-xs text-default-500">
-          Decision {position} of {total}
-        </div>
-        <div className="flex items-start justify-between gap-3">
-          <h2 className="text-lg font-semibold leading-tight flex-1">
-            {decision.summary}
-          </h2>
-          <div className="flex flex-col items-end gap-1 shrink-0">
-            <Chip size="sm" variant="flat" color={statusColor(decision.status)}>
-              {humanStatus(decision.status)}
-            </Chip>
-            <Chip size="sm" variant="flat" color={PRIORITY_COLOR_MAP[decision.priority]}>
+      <CardHeader className="flex flex-col gap-3 px-6 pt-5 pb-3">
+        {/* Eyebrow: position + chip row */}
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <span className="text-xs uppercase tracking-wider text-default-500 font-semibold">
+            Decision {position} of {total}
+          </span>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Chip
+              size="sm"
+              variant="flat"
+              color={PRIORITY_COLOR_MAP[decision.priority]}
+            >
               {humanPriority(decision.priority)}
+            </Chip>
+            <Chip
+              size="sm"
+              variant="flat"
+              color={statusColor(decision.status)}
+            >
+              {humanStatus(decision.status)}
             </Chip>
             {row.blockingCount !== undefined && row.blockingCount > 0 && (
               <Chip size="sm" color="danger" variant="flat">
@@ -262,19 +268,52 @@ function QueueCard({
             )}
           </div>
         </div>
-        <div className="text-xs text-default-500">
-          by {decision.creator}
-          {decision.assignee && <> · assigned to {decision.assignee}</>}
+
+        {/* Headline: full-width title with proper line-height */}
+        <h2 className="text-2xl font-semibold leading-snug text-foreground">
+          {decision.summary}
+        </h2>
+
+        {/* Attribution row */}
+        <div className="text-sm text-default-500 flex flex-wrap gap-x-3 gap-y-1">
+          <span>
+            <span className="text-default-400">Opened by</span>{" "}
+            <span className="font-medium text-foreground">
+              {decision.creator}
+            </span>
+          </span>
+          {decision.assignee && (
+            <span>
+              <span className="text-default-400">Assigned to</span>{" "}
+              <span className="font-medium text-foreground">
+                {decision.assignee}
+              </span>
+            </span>
+          )}
           {decision.recommended_by && (
-            <> · recommended by {decision.recommended_by}</>
+            <span>
+              <span className="text-default-400">Recommended by</span>{" "}
+              <span className="font-medium text-foreground">
+                {decision.recommended_by}
+              </span>
+            </span>
           )}
         </div>
       </CardHeader>
 
-      <CardBody className="gap-4">
-        {decision.description && (
-          <p className="text-sm text-foreground/85 whitespace-pre-wrap">
-            {decision.description}
+      <CardBody className="gap-5 px-6 pb-5">
+        {decision.description ? (
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-default-500 mb-1.5">
+              Context
+            </div>
+            <p className="text-sm leading-relaxed text-foreground/90 whitespace-pre-wrap">
+              {decision.description}
+            </p>
+          </div>
+        ) : (
+          <p className="text-xs italic text-default-400">
+            No description on this decision yet.
           </p>
         )}
 

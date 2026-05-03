@@ -1,8 +1,10 @@
-import { useMemo } from "react";
+import { useMemo, type CSSProperties } from "react";
 import {
   ReactFlow,
   Background,
   MarkerType,
+  Handle,
+  Position,
   type Node,
   type Edge,
   type NodeProps,
@@ -59,6 +61,9 @@ function EventNode({ data }: NodeProps) {
         gap: 6,
       }}
     >
+      {/* Audit flow is laid out left-to-right; only horizontal handles needed. */}
+      <Handle type="target" position={Position.Left} style={HANDLE_STYLE} />
+      <Handle type="source" position={Position.Right} style={HANDLE_STYLE} />
       <div className="flex items-center gap-2 flex-wrap">
         <span
           className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wide"
@@ -94,6 +99,14 @@ function EventNode({ data }: NodeProps) {
 }
 
 const nodeTypes = { event: EventNode };
+
+const HANDLE_STYLE: CSSProperties = {
+  width: 6,
+  height: 6,
+  background: "transparent",
+  border: "none",
+  opacity: 0,
+};
 
 function describePayload(
   ev: Event,

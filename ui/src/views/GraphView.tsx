@@ -1,9 +1,11 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useState, type CSSProperties } from "react";
 import {
   ReactFlow,
   Background,
   Controls,
   MarkerType,
+  Handle,
+  Position,
   type Node,
   type Edge,
   type NodeProps,
@@ -58,6 +60,14 @@ function DecisionNode({ data, selected }: NodeProps) {
           : undefined,
       }}
     >
+      {/* Handles are REQUIRED for custom nodes — edges anchor to them.
+          We expose source AND target on every side so any layout direction
+          (TB/LR/free) routes edges sensibly without per-direction wiring. */}
+      <Handle type="target" position={Position.Top} style={HANDLE_STYLE} />
+      <Handle type="target" position={Position.Left} style={HANDLE_STYLE} />
+      <Handle type="source" position={Position.Bottom} style={HANDLE_STYLE} />
+      <Handle type="source" position={Position.Right} style={HANDLE_STYLE} />
+
       <div className="font-semibold leading-tight mb-1.5 text-foreground">
         {truncated}
       </div>
@@ -70,6 +80,15 @@ function DecisionNode({ data, selected }: NodeProps) {
     </div>
   );
 }
+
+// Tiny invisible handle — doesn't show, but anchors edges so they can route.
+const HANDLE_STYLE: CSSProperties = {
+  width: 6,
+  height: 6,
+  background: "transparent",
+  border: "none",
+  opacity: 0,
+};
 
 const nodeTypes = { decision: DecisionNode };
 

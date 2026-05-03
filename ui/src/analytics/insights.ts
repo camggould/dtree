@@ -91,47 +91,70 @@ export function computeAgentHumanBreakdown(
 
 export interface CreatorFacet {
   totalCreated: number;
-  byStatus: Record<string, number>; // proposed/decided/out_of_scope/superseded
+  outstanding: number; // status === "proposed"
+  resolved: number; // anything else
+  byStatus: Record<string, number>;
 
-  // Subset: decisions you created where you were also the recommender
+  // Subset: created where they were also the recommender (any status).
   alsoRecommender: number;
-  // Of those that have been DECIDED (so we can score acceptance):
-  alsoRecommenderDecided: RateStat; // accepted = recommendation followed
+
+  // Of RESOLVED creations: who provided the standing recommendation?
+  // Counts decisions, not events. "none" = nobody recommended anything.
+  resolvedByRecSource: {
+    self: number;
+    anotherAgent: number;
+    anotherHuman: number;
+    none: number;
+  };
 }
 
 export interface RecommenderFacet {
-  totalRecommended: number; // recommended_by === handle (any status)
-  decidedCount: number; // ...where status === "decided"
-  acceptance: RateStat; // accepted / decidedCount
-  // Three explicit deciding-actor buckets, so users can disentangle
-  // "I followed my own recommendation" (self) from "another agent followed
-  // it" (cross-agent) from "a human followed it" (cross-kind trust signal).
-  byKindOfDecider: {
-    self: RateStat;
-    otherAgent: RateStat;
-    otherHuman: RateStat;
-    unknownActor: RateStat;
+  totalRecommended: number;
+  decidedCount: number;
+  acceptedCount: number;
+  overriddenCount: number;
+  acceptance: RateStat;
+
+  // Who accepted vs who overrode this person's recommendations, split by
+  // the actor kind making the call.
+  acceptedBy: {
+    self: number;
+    anotherAgent: number;
+    anotherHuman: number;
+    unknown: number;
+  };
+  overriddenBy: {
+    self: number;
+    anotherAgent: number;
+    anotherHuman: number;
+    unknown: number;
   };
 }
 
 export interface DeciderFacet {
   totalDecided: number;
-  followedRec: number; // accepted recommendation (rec existed and matched)
-  overrodeRec: number; // rec existed but they chose differently
-  noRecExisted: number; // no recommendation existed
+  followedRec: number;
+  overrodeRec: number;
+  noRecExisted: number;
   acceptanceWhenRecExisted: RateStat;
 
   // Of the decisions where they followed a recommendation, who recommended?
-  // Self vs another-agent vs human is the meaningful split.
   followedFromSelf: number;
   followedFromOtherAgent: number;
   followedFromHuman: number;
   followedFromUnknown: number;
 
-  // Trust profile: rate of acceptance when the recommender was that source.
-  selfTrust: RateStat;        // own recs they accepted (autonomy)
-  otherAgentTrust: RateStat;  // other-agent recs they accepted
-  humanTrust: RateStat;       // human recs they accepted
+  // Per-source acceptance rate.
+  bySource: {
+    self: RateStat;
+    anotherAgent: RateStat;
+    anotherHuman: RateStat;
+  };
+
+  // Headline AUTONOMY metric: of decisions where some agent (self OR other)
+  // recommended something AND this person decided, what fraction did they
+  // follow? High = comfortable delegating to AI; low = manual override-prone.
+  agenticAutonomy: RateStat;
 }
 
 export interface UserStats {
@@ -273,63 +296,73 @@ export function computeUserStats(
     {} as Record<string, number>,
   );
   const createdAlsoRec = created.filter((d) => d.recommended_by === handle);
-  const createdAlsoRecDecided = createdAlsoRec.filter(
-    (d) => d.status === "decided",
-  );
+  const outstanding = created.filter((d) => d.status === "proposed").length;
+  const resolvedList = created.filter((d) => d.status !== "proposed");
+
+  const resolvedByRecSource = {
+    self: 0,
+    anotherAgent: 0,
+    anotherHuman: 0,
+    none: 0,
+  };
+  for (const d of resolvedList) {
+    if (!d.recommended_by) {
+      resolvedByRecSource.none += 1;
+    } else if (d.recommended_by === handle) {
+      resolvedByRecSource.self += 1;
+    } else {
+      const k = actorKind(actors, d.recommended_by);
+      if (k === "agent") resolvedByRecSource.anotherAgent += 1;
+      else if (k === "human") resolvedByRecSource.anotherHuman += 1;
+      else resolvedByRecSource.none += 1;
+    }
+  }
+
   const creator: CreatorFacet = {
     totalCreated: created.length,
+    outstanding,
+    resolved: resolvedList.length,
     byStatus,
     alsoRecommender: createdAlsoRec.length,
-    alsoRecommenderDecided: withRate({
-      total: createdAlsoRecDecided.length,
-      accepted: createdAlsoRecDecided.filter(isAccepted).length,
-    }),
+    resolvedByRecSource,
   };
 
   // ---- Recommender facet
   const recommended = decisions.filter((d) => d.recommended_by === handle);
   const recDecided = recommended.filter((d) => d.status === "decided");
 
-  const deciderBuckets = {
-    self: { total: 0, accepted: 0 },
-    otherAgent: { total: 0, accepted: 0 },
-    otherHuman: { total: 0, accepted: 0 },
-    unknownActor: { total: 0, accepted: 0 },
+  type Bucket = "self" | "anotherAgent" | "anotherHuman" | "unknown";
+  const acceptedBy = { self: 0, anotherAgent: 0, anotherHuman: 0, unknown: 0 };
+  const overriddenBy = { self: 0, anotherAgent: 0, anotherHuman: 0, unknown: 0 };
+  let acceptedCount = 0;
+  let overriddenCount = 0;
+  const bucketFor = (deciderHandle: string | undefined): Bucket => {
+    if (deciderHandle === handle) return "self";
+    const k = actorKind(actors, deciderHandle);
+    if (k === "agent") return "anotherAgent";
+    if (k === "human") return "anotherHuman";
+    return "unknown";
   };
   for (const d of recDecided) {
     const decider = (d.decided_by ?? [])[0];
-    const acc = isAccepted(d);
-    if (decider === handle) {
-      deciderBuckets.self.total += 1;
-      if (acc) deciderBuckets.self.accepted += 1;
-      continue;
-    }
-    const k = actorKind(actors, decider);
-    if (k === "agent") {
-      deciderBuckets.otherAgent.total += 1;
-      if (acc) deciderBuckets.otherAgent.accepted += 1;
-    } else if (k === "human") {
-      deciderBuckets.otherHuman.total += 1;
-      if (acc) deciderBuckets.otherHuman.accepted += 1;
+    const b = bucketFor(decider);
+    if (isAccepted(d)) {
+      acceptedBy[b] += 1;
+      acceptedCount += 1;
     } else {
-      deciderBuckets.unknownActor.total += 1;
-      if (acc) deciderBuckets.unknownActor.accepted += 1;
+      overriddenBy[b] += 1;
+      overriddenCount += 1;
     }
   }
 
   const recommender: RecommenderFacet = {
     totalRecommended: recommended.length,
     decidedCount: recDecided.length,
-    acceptance: withRate({
-      total: recDecided.length,
-      accepted: recDecided.filter(isAccepted).length,
-    }),
-    byKindOfDecider: {
-      self: withRate(deciderBuckets.self),
-      otherAgent: withRate(deciderBuckets.otherAgent),
-      otherHuman: withRate(deciderBuckets.otherHuman),
-      unknownActor: withRate(deciderBuckets.unknownActor),
-    },
+    acceptedCount,
+    overriddenCount,
+    acceptance: withRate({ total: recDecided.length, accepted: acceptedCount }),
+    acceptedBy,
+    overriddenBy,
   };
 
   // ---- Decider facet
@@ -379,6 +412,15 @@ export function computeUserStats(
     }
   }
 
+  const agenticTotal = trustBuckets.self.total + trustBuckets.otherAgent.total;
+  // "self" only counts as agentic if THIS actor IS an agent.
+  const userIsAgent = actorKind(actors, handle) === "agent";
+  const agenticAccepted =
+    (userIsAgent ? trustBuckets.self.accepted : 0) +
+    trustBuckets.otherAgent.accepted;
+  const agenticDenominator =
+    (userIsAgent ? trustBuckets.self.total : 0) + trustBuckets.otherAgent.total;
+
   const decider: DeciderFacet = {
     totalDecided: decidedByUser.length,
     followedRec,
@@ -392,10 +434,18 @@ export function computeUserStats(
     followedFromOtherAgent,
     followedFromHuman,
     followedFromUnknown,
-    selfTrust: withRate(trustBuckets.self),
-    otherAgentTrust: withRate(trustBuckets.otherAgent),
-    humanTrust: withRate(trustBuckets.human),
+    bySource: {
+      self: withRate(trustBuckets.self),
+      anotherAgent: withRate(trustBuckets.otherAgent),
+      anotherHuman: withRate(trustBuckets.human),
+    },
+    agenticAutonomy: withRate({
+      total: agenticDenominator,
+      accepted: agenticAccepted,
+    }),
   };
+  // Suppress lint: agenticTotal is a debug aid; remove if unused.
+  void agenticTotal;
 
   return { handle, creator, recommender, decider };
 }
