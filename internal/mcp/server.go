@@ -119,6 +119,9 @@ func (s *Server) registerTools() {
 		mcpgo.WithDescription("List all decision tree slugs in this project."),
 	)
 	s.mcp.AddTool(listTreesTool, s.wrapHandler("list_trees", s.handleListTrees))
+
+	// Register the full HTTP-mirrored tool set.
+	s.registerAPITools()
 }
 
 // Run starts the configured transport and blocks until ctx is cancelled or the
