@@ -107,6 +107,7 @@ func New(cfg Config) (*Server, error) {
 	}
 
 	s.registerTools()
+	s.registerResources()
 
 	return s, nil
 }
@@ -273,4 +274,32 @@ func (s *Server) InvokeListTrees(ctx context.Context, req mcpgo.CallToolRequest)
 // using the mcp-go SSE transport. The caller is responsible for closing it.
 func (s *Server) NewTestSSEServer() *httptest.Server {
 	return mcpserver.NewTestServer(s.mcp)
+}
+
+// InvokeResource calls a registered resource handler by URI directly,
+// bypassing transport. The arguments map is supplied as the URI template
+// substitutions (e.g. {"tree": "alpha"}). Useful for unit-testing resource
+// behavior without stdio/HTTP setup.
+func (s *Server) InvokeResource(ctx context.Context, uri string, args map[string]any) ([]mcpgo.ResourceContents, error) {
+	req := mcpgo.ReadResourceRequest{
+		Params: mcpgo.ReadResourceParams{
+			URI:       uri,
+			Arguments: args,
+		},
+	}
+	switch uri {
+	case resURITrees:
+		return s.adaptResource(resURITrees, s.handleListTreesResource)(ctx, req)
+	case resURIActors:
+		return s.adaptResource(resURIActors, s.handleListActorsResource)(ctx, req)
+	}
+	// Templated URIs: dispatch by prefix shape encoded in arguments.
+	// Decision template requires both tree and id; tree template requires tree only.
+	if _, hasID := args["id"]; hasID {
+		return s.adaptResource(resURIDecTpl, s.handleGetDecisionResource)(ctx, req)
+	}
+	if _, hasTree := args["tree"]; hasTree {
+		return s.adaptResource(resURITreeTpl, s.handleGetTreeResource)(ctx, req)
+	}
+	return nil, fmt.Errorf("InvokeResource: unrecognized uri %q", uri)
 }
