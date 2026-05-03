@@ -129,6 +129,7 @@ export interface AuditFilters {
   until?: string;
   cursor?: string;
   limit?: string;
+  order?: "asc" | "desc";
 }
 
 export function useAuditList(
@@ -143,6 +144,7 @@ export function useAuditList(
   if (filters.until) filterRecord.until = filters.until;
   if (filters.cursor) filterRecord.cursor = filters.cursor;
   if (filters.limit) filterRecord.limit = filters.limit;
+  if (filters.order) filterRecord.order = filters.order;
 
   return useQuery({
     queryKey: keys.audit(tree, filterRecord),

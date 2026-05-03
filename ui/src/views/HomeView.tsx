@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import {
   Card,
   CardBody,
@@ -179,8 +179,12 @@ function TreesGrid({
 // ---------- Recent activity ----------------------------------------------
 
 function RecentActivity() {
-  const { data, isLoading } = useAuditList("", { limit: "8" });
+  const { data, isLoading } = useAuditList("", {
+    limit: "8",
+    order: "desc",
+  });
   const openDecision = useAppStore((s) => s.openDecision);
+  const [, navigate] = useLocation();
   const events = data?.items ?? [];
 
   return (
@@ -197,16 +201,43 @@ function RecentActivity() {
         ) : (
           <div className="flex flex-col gap-2">
             {events.slice(0, 8).map((e) => {
-              const clickable = e.kind === "decision" && e.tree && e.id;
-              const summary =
-                ((e.payload?.after as Record<string, unknown> | undefined)
-                  ?.summary as string | undefined) ?? null;
+              const after = e.payload?.after as
+                | Record<string, unknown>
+                | undefined;
+              const summary = (after?.summary as string | undefined) ?? null;
+
+              // For tree events, the tree slug lives in e.id (per the
+              // Event{Kind: tree, ID: slug} construction in the backend).
+              // payload.after.title is the human-friendly name.
+              const treeSlug =
+                e.kind === "tree"
+                  ? (e.id || (after?.slug as string | undefined) || "")
+                  : "";
+              const treeTitle =
+                (after?.title as string | undefined) || treeSlug;
+
+              const isDecisionClick =
+                e.kind === "decision" && Boolean(e.tree) && Boolean(e.id);
+              const isTreeClick =
+                e.kind === "tree" && Boolean(treeSlug);
+              const clickable = isDecisionClick || isTreeClick;
+
+              const handleClick = () => {
+                if (isDecisionClick) {
+                  openDecision(e.tree!, e.id);
+                } else if (isTreeClick) {
+                  navigate(`/trees/${treeSlug}`);
+                }
+              };
+
+              const label = summary || (e.kind === "tree" ? treeTitle : null);
+
               return (
                 <button
                   key={e.event_id}
                   type="button"
                   disabled={!clickable}
-                  onClick={() => clickable && openDecision(e.tree!, e.id)}
+                  onClick={handleClick}
                   className={`text-left text-sm p-2 -mx-2 rounded ${
                     clickable
                       ? "hover:bg-default-100 cursor-pointer"
@@ -220,15 +251,18 @@ function RecentActivity() {
                     <span className="font-medium text-foreground">
                       {e.actor}
                     </span>
-                    {summary && (
+                    {label && (
                       <span className="text-default-600 truncate">
-                        — {summary}
+                        — {label}
                       </span>
                     )}
                   </div>
                   <div className="text-xs text-default-400 mt-0.5">
                     {formatDistanceToNow(new Date(e.ts))} ago
                     {e.tree && <span> · in {e.tree}</span>}
+                    {!e.tree && e.kind === "tree" && treeSlug && (
+                      <span> · {treeSlug}</span>
+                    )}
                   </div>
                 </button>
               );
