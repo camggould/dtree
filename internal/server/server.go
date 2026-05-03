@@ -65,6 +65,7 @@ func New(cfg Config) *http.Server {
 	// Mount /v1 routes.
 	r.Route("/v1", func(r chi.Router) {
 		r.Get("/health", healthHandler(cfg.Version))
+		mountTrees(r, cfg)
 	})
 
 	// Catch-all for unknown routes: return Problem Details 404.
