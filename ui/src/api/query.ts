@@ -1,6 +1,7 @@
 import {
   QueryClient,
   useQuery,
+  useQueries,
   type UseQueryResult,
 } from "@tanstack/react-query";
 import { apiFetch } from "@/api/client";
@@ -13,7 +14,10 @@ import type {
   Event,
   AuditResponse,
   QueueItem,
+  Status,
+  Priority,
 } from "@/api/types.gen";
+import { subDays, format, parseISO } from "date-fns";
 
 export const queryClient = new QueryClient({
   defaultOptions: {
@@ -37,6 +41,7 @@ export const keys = {
     ["audit", tree ?? "all", filters ?? {}] as const,
   auditWithFilters: (tree: string, filters: Record<string, string>) =>
     ["audit", tree, filters] as const,
+  auditSince: (since: string) => ["audit", "since", since] as const,
   queue: (tree: string, kind: string) =>
     ["trees", tree, "queues", kind] as const,
   actors: () => ["actors"] as const,
@@ -177,5 +182,145 @@ export function useQueue(
       }
     },
     enabled: Boolean(tree),
+  });
+}
+
+export interface AggregateMetrics {
+  total_decisions: number;
+  total_trees: number;
+  by_status: Record<Status, number>;
+  by_priority: Record<Priority, number>;
+  by_creator: Array<{ handle: string; count: number }>;
+  assumptions_count: number;
+  // Recommendation acceptance: % of decided where is_recommended or actual_choice === recommended_summary
+  acceptance_rate: number | null;
+  acceptance_numerator: number;
+  acceptance_denominator: number;
+  isLoading: boolean;
+  isError: boolean;
+}
+
+export function useAggregateMetrics(): AggregateMetrics {
+  const treesQuery = useTrees();
+  const treeSlugs = treesQuery.data?.map((t) => t.slug) ?? [];
+
+  const metricsResults = useQueries({
+    queries: treeSlugs.map((slug) => ({
+      queryKey: keys.metrics(slug),
+      queryFn: async () => {
+        const { data } = await apiFetch<Metrics>(`/v1/trees/${slug}/metrics`);
+        return data;
+      },
+      enabled: Boolean(slug),
+    })),
+  });
+
+  const isLoading =
+    treesQuery.isLoading || metricsResults.some((r) => r.isLoading);
+  const isError =
+    treesQuery.isError || metricsResults.some((r) => r.isError);
+
+  const allMetrics = metricsResults
+    .map((r) => r.data)
+    .filter((d): d is Metrics => d != null);
+
+  const total_decisions = allMetrics.reduce(
+    (sum, m) => sum + m.total_decisions,
+    0,
+  );
+  const assumptions_count = allMetrics.reduce(
+    (sum, m) => sum + m.assumptions_count,
+    0,
+  );
+
+  const by_status = allMetrics.reduce(
+    (acc, m) => {
+      for (const [k, v] of Object.entries(m.by_status)) {
+        acc[k as Status] = (acc[k as Status] ?? 0) + v;
+      }
+      return acc;
+    },
+    {} as Record<Status, number>,
+  );
+
+  const by_priority = allMetrics.reduce(
+    (acc, m) => {
+      for (const [k, v] of Object.entries(m.by_priority)) {
+        acc[k as Priority] = (acc[k as Priority] ?? 0) + v;
+      }
+      return acc;
+    },
+    {} as Record<Priority, number>,
+  );
+
+  // Merge by_creator: group by handle, sum counts
+  const creatorMap = new Map<string, number>();
+  for (const m of allMetrics) {
+    for (const { handle, count } of m.by_creator) {
+      creatorMap.set(handle, (creatorMap.get(handle) ?? 0) + count);
+    }
+  }
+  const by_creator = Array.from(creatorMap.entries())
+    .map(([handle, count]) => ({ handle, count }))
+    .sort((a, b) => b.count - a.count);
+
+  // Acceptance rate: by_status.decided count as denominator,
+  // For numerator we rely on the decisions queries but metrics doesn't have
+  // is_recommended breakdown, so we use a conservative 0/denominator when unknown
+  // The Dashboard will compute this separately via decided decisions fetch.
+  const acceptance_denominator = by_status["decided"] ?? 0;
+  const acceptance_numerator = 0; // computed in Dashboard via decision fetches
+  const acceptance_rate =
+    acceptance_denominator > 0
+      ? (acceptance_numerator / acceptance_denominator) * 100
+      : null;
+
+  return {
+    total_decisions,
+    total_trees: treeSlugs.length,
+    by_status,
+    by_priority,
+    by_creator,
+    assumptions_count,
+    acceptance_rate,
+    acceptance_numerator,
+    acceptance_denominator,
+    isLoading,
+    isError,
+  };
+}
+
+export interface DailyCount {
+  date: string; // "YYYY-MM-DD"
+  count: number;
+}
+
+export function useActivityCounts(days = 30): UseQueryResult<DailyCount[]> {
+  const since = subDays(new Date(), days).toISOString();
+  return useQuery({
+    queryKey: keys.auditSince(since),
+    queryFn: async () => {
+      const params = new URLSearchParams({ since, limit: "1000" });
+      const { data } = await apiFetch<AuditResponse>(
+        `/v1/audit?${params.toString()}`,
+      );
+      // Group events by day
+      const countMap = new Map<string, number>();
+      // Pre-fill all days with 0
+      for (let i = days - 1; i >= 0; i--) {
+        const day = format(subDays(new Date(), i), "yyyy-MM-dd");
+        countMap.set(day, 0);
+      }
+      for (const event of data.items) {
+        const day = format(parseISO(event.ts), "yyyy-MM-dd");
+        if (countMap.has(day)) {
+          countMap.set(day, (countMap.get(day) ?? 0) + 1);
+        }
+      }
+      return Array.from(countMap.entries()).map(([date, count]) => ({
+        date,
+        count,
+      }));
+    },
   });
 }
