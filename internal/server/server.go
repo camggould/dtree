@@ -67,6 +67,7 @@ func New(cfg Config) *http.Server {
 		r.Get("/health", healthHandler(cfg.Version))
 		mountTrees(r, cfg)
 		mountDecisions(r, cfg)
+		mountState(r, cfg)
 
 		// Audit endpoints.
 		ah := newAuditHandlers(cfg.RepoRoot)
